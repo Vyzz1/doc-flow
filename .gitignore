@@ -1,0 +1,21 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Build and test output
+/bin/
+/dist/
+coverage.out
+.cache/
+*.test
+bootstrap
+
+# Infrastructure and frontend dependencies
+node_modules/
+cdk.out/
+
+# Editor and OS files
+.idea/
+.DS_Store
+Thumbs.db
