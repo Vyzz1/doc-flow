@@ -40,9 +40,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # The module has no dependencies yet, so there is no go.sum to key a
-          # cache on. Drop this line once the AWS SDK lands.
-          cache: false
 
       # GOOS, GOARCH, and CGO_ENABLED are deliberately not set at the workflow
       # level: the `build` target exports them itself, and setting them here
@@ -97,7 +94,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: false
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}

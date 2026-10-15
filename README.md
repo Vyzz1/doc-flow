@@ -18,11 +18,14 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 ## Layout
 
 - `cmd/`: future Lambda entrypoints: create-job, get-job, starter, and worker.
-- `internal/model`: implemented domain types: `Job` and its status state machine,
+- `internal/model`: domain types: `Job` and its status state machine,
   `StepResult`, `DocumentResult`, and the `WorkflowInput` payload passed between
   Step Functions states.
-- `internal/`: the remaining shared storage, validation, processing, quota, and
-  logging packages.
+- `internal/logging`: structured JSON logging carrying `jobId` and `userId`.
+- `internal/store`: the single-table DynamoDB persistence behind a `JobStore`
+  interface.
+- `internal/`: the remaining shared storage, validation, processing, and quota
+  packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
 - `infra/` and `web/` will be added when implementation begins.
@@ -33,8 +36,12 @@ holds their reusable logic.
 
 ## Local checks
 
-Requires Go 1.26.2 or newer, GNU Make, and golangci-lint v2 (verified with
-v2.12.2). Install the linter using its [official installation instructions](https://golangci-lint.run/docs/welcome/install/local/).
+Requires Go 1.26.9 or newer, GNU Make, and golangci-lint v2 (verified with
+v2.12.2). The floor is 1.26.9 rather than 1.26.2 because govulncheck reports
+ten stdlib advisories, in `net/http`, `net/textproto`, `crypto/tls`, and
+`net/url`, as reachable once the AWS SDK makes real HTTP calls; they are all
+fixed in 1.26.9. If `go build` reports `go.mod requires go >= 1.26.9`, install
+it or set `GOTOOLCHAIN=auto` to let Go fetch it. Install the linter using its [official installation instructions](https://golangci-lint.run/docs/welcome/install/local/).
 No external application dependencies are installed.
 
 ```sh
@@ -49,10 +56,25 @@ the same targets, so a green `make lint test build` locally means a green build.
 executables at `bin/<command>/bootstrap` with cgo disabled. These are still
 placeholder commands, not functioning Lambda handlers.
 
-`internal/model` is covered by table-driven unit tests. The other packages have
-no tests yet because no behavior has been implemented. Integration tests, the
-local Docker environment, frontend lint, and CDK checks remain TODOs for the next
-stage; their Make targets will be added alongside those components.
+`internal/model`, `internal/logging`, and `internal/store` are covered by
+table-driven unit tests; the store is tested against a fake of the four
+DynamoDB calls it makes. The other packages have no tests yet because no
+behavior has been implemented.
+
+Integration tests against DynamoDB Local are **not** wired up yet, so there is
+no `make test-int` target despite AGENTS.md mentioning one. The local Docker
+environment, frontend lint, and CDK checks remain TODOs for the next stage.
+
+## Configuration
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `LOG_LEVEL` | `internal/logging` | `debug`, `info` (default), `warn`, or `error` |
+| `TABLE_NAME` | `internal/store` | the single DynamoDB table; required |
+| `DYNAMODB_ENDPOINT` | `internal/store` | overrides the endpoint, for DynamoDB Local |
+
+The table's TTL must be configured on the `expiresAt` attribute, which every
+item carries as Unix seconds seven days out.
 
 ## CI
 
