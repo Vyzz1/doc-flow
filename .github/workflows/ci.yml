@@ -34,10 +34,10 @@ jobs:
       GOLANGCI_LINT_VERSION: v2.12.2
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           # The module has no dependencies yet, so there is no go.sum to key a
@@ -91,10 +91,10 @@ jobs:
       GOVULNCHECK_VERSION: v1.9.0
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
