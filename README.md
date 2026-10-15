@@ -2,8 +2,9 @@
 
 A low-cost, serverless document-processing pipeline on AWS.
 
-Status: initial Go scaffold. The Go files contain package declarations and TODOs;
-the commands do not run Lambda handlers or process documents yet.
+Status: early Go scaffold. `internal/model` holds the implemented domain types;
+every other package is a package declaration with TODOs, and the commands do not
+run Lambda handlers or process documents yet.
 
 ## Planned flow
 
@@ -17,7 +18,11 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 ## Layout
 
 - `cmd/`: future Lambda entrypoints: create-job, get-job, starter, and worker.
-- `internal/`: shared domain, storage, validation, processing, quota, and logging packages.
+- `internal/model`: implemented domain types: `Job` and its status state machine,
+  `StepResult`, `DocumentResult`, and the `WorkflowInput` payload passed between
+  Step Functions states.
+- `internal/`: the remaining shared storage, validation, processing, quota, and
+  logging packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
 - `infra/` and `web/` will be added when implementation begins.
@@ -44,9 +49,10 @@ the same targets, so a green `make lint test build` locally means a green build.
 executables at `bin/<command>/bootstrap` with cgo disabled. These are still
 placeholder commands, not functioning Lambda handlers.
 
-There are no tests yet because no behavior has been implemented. Integration
-tests, the local Docker environment, frontend lint, and CDK checks remain TODOs
-for the next stage; their Make targets will be added alongside those components.
+`internal/model` is covered by table-driven unit tests. The other packages have
+no tests yet because no behavior has been implemented. Integration tests, the
+local Docker environment, frontend lint, and CDK checks remain TODOs for the next
+stage; their Make targets will be added alongside those components.
 
 ## CI
 
