@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # Go modules. The module has no dependencies yet, so this stays quiet until
+  # the AWS SDK lands. Security updates are a repository setting, not a setting
+  # here: enable "Dependabot security updates" to get out-of-schedule patches
+  # for advisories.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+      timezone: Asia/Ho_Chi_Minh
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      # One pull request for the whole SDK: its modules share a release train
+      # and bumping them apart tends to break the build.
+      aws-sdk:
+        patterns:
+          - github.com/aws/aws-sdk-go-v2*
+      # Everything else, batched by risk. Major bumps stay ungrouped so each
+      # arrives as its own reviewable pull request.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+      timezone: Asia/Ho_Chi_Minh
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      actions:
+        patterns:
+          - "*"

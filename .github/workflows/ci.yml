@@ -4,11 +4,16 @@ on:
   push:
     branches: [main, master]
   pull_request:
-  # Allow a manual run from the Actions tab.
+    types: [opened, synchronize, reopened, ready_for_review]
+  # The vulnerability database moves even when the code does not, so rescan
+  # weekly. Scheduled runs only ever use the default branch.
+  schedule:
+    - cron: "0 2 * * 1"
   workflow_dispatch:
 
-# Least privilege: CI only reads the repository. No job here touches AWS, and
-# there is deliberately no deploy workflow yet.
+# Least privilege: the jobs below only read the repository. The merge job uses
+# its own token. No job here touches AWS, and there is deliberately no deploy
+# workflow.
 permissions:
   contents: read
 
@@ -76,3 +81,64 @@ jobs:
             git status --short
             exit 1
           fi
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      GOVULNCHECK_VERSION: v1.9.0
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
+      # Reports only vulnerabilities that are actually reachable from this code.
+      # With no dependencies yet, this effectively audits the Go version in
+      # go.mod against the stdlib advisories.
+      - name: Scan
+        run: PATH="$(go env GOPATH)/bin:$PATH" govulncheck ./...
+
+  merge:
+    name: Merge
+    # Runs only when both jobs above succeed, which is what makes this safe
+    # without branch protection.
+    needs: [go, govulncheck]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # Pull requests opened by a human with write access, from a branch in this
+    # repository. user.type excludes bots, so a Dependabot bump waits for a
+    # human; head.repo excludes forks, which is also why the plain
+    # pull_request trigger is safe here (GitHub withholds secrets from fork
+    # runs).
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.user.type != 'Bot'
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      && github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      # Deliberately no checkout: the token stays away from pull request code.
+      - name: Squash and merge
+        env:
+          # A fine-grained PAT scoped to this repository, with Contents and
+          # Pull requests set to read and write. GITHUB_TOKEN would also work,
+          # but a merge it performs does not trigger workflows on the target
+          # branch, so CI would never run on the merged trunk.
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
+        run: |
+          gh pr merge "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --squash \
+            --delete-branch

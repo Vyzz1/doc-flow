@@ -18,8 +18,8 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 
 - `cmd/`: future Lambda entrypoints: create-job, get-job, starter, and worker.
 - `internal/`: shared domain, storage, validation, processing, quota, and logging packages.
-- `.github/workflows/ci.yml`: lint, test, and linux/arm64 build on every push
-  and pull request.
+- `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
+  scan, and the merge step.
 - `infra/` and `web/` will be added when implementation begins.
 
 The worker placeholder will be split into individual processing Lambda commands
@@ -47,3 +47,51 @@ placeholder commands, not functioning Lambda handlers.
 There are no tests yet because no behavior has been implemented. Integration
 tests, the local Docker environment, frontend lint, and CDK checks remain TODOs
 for the next stage; their Make targets will be added alongside those components.
+
+## CI
+
+One workflow, `.github/workflows/ci.yml`, on pushes to the trunk, on pull
+requests, Mondays at 02:00 UTC, and on demand:
+
+| Job | Does |
+|---|---|
+| `Go lint, test, build` | `make lint`, `go test -race -shuffle=on`, `make build`, tidy and clean-tree check |
+| `govulncheck` | `govulncheck ./...` |
+| `Merge` | squash-merges the pull request and deletes the branch |
+
+CI runs the same Make targets you run locally, so a green `make lint test build`
+means a green build.
+
+### Merge
+
+The merge job `needs` the other two, so it runs only when lint, test, build,
+and the vulnerability scan have all passed. It merges pull requests opened by
+the repository owner, an organization member, or a collaborator, from a branch
+in this repository, that are not drafts. Bots, outside contributors, and forks
+are excluded, which is why the plain `pull_request` trigger is safe: GitHub
+withholds secrets from fork runs.
+
+Setup is one step: add a repository secret named `AUTO_MERGE_TOKEN` holding a
+fine-grained personal access token scoped to this repository only, with
+`Contents: read and write` and `Pull requests: read and write`, and nothing
+else. Give it an expiry and renew it. No branch protection and no "Allow
+auto-merge" setting are needed, because the job merges directly rather than
+queueing.
+
+The flip side is that the gate is this workflow alone. A check added elsewhere
+later will not hold the merge back unless it becomes a job here, and a
+collaborator's pull request merges with no human review once the jobs are
+green.
+
+### Dependency and vulnerability updates
+
+`govulncheck` fails the build only when vulnerable code is actually reachable.
+With no dependencies yet it audits the Go version in `go.mod` against the
+stdlib advisories; fixing one of those means bumping the `go` directive by
+hand, since Dependabot does not do it.
+
+`.github/dependabot.yml` opens weekly update pull requests for Go modules and
+for the actions used here, grouped to keep the noise down. They are **not**
+merged automatically: the merge job excludes bots, so a bump lands only after
+you approve it. Enable "Dependabot security updates" in the repository settings
+to get advisory patches outside the weekly schedule.
