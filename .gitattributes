@@ -1,0 +1,13 @@
+# Keep every text file LF in the working tree on every platform. Without this,
+# a Windows clone with core.autocrlf=true checks Go files out as CRLF, gofmt
+# rejects them, and `make lint` fails locally while CI passes on Linux.
+# Matches end_of_line = lf in .editorconfig.
+* text=auto eol=lf
+
+# Fixtures Git must never convert.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.tif binary
+*.tiff binary

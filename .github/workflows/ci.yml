@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  # Allow a manual run from the Actions tab.
+  workflow_dispatch:
+
+# Least privilege: CI only reads the repository. No job here touches AWS, and
+# there is deliberately no deploy workflow yet.
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the previous run, so a busy branch does
+# not burn Actions minutes on results nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Keep the linter in step with the version README.md documents.
+      GOLANGCI_LINT_VERSION: v2.12.2
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          # The module has no dependencies yet, so there is no go.sum to key a
+          # cache on. Drop this line once the AWS SDK lands.
+          cache: false
+
+      # GOOS, GOARCH, and CGO_ENABLED are deliberately not set at the workflow
+      # level: the `build` target exports them itself, and setting them here
+      # would make `go install` and `go test` cross-compile too.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
+
+      # `make lint` runs the linters and then `golangci-lint fmt --diff`, which
+      # exits non-zero when gofmt or goimports would rewrite a file.
+      - name: Lint and check formatting
+        run: PATH="$(go env GOPATH)/bin:$PATH" make lint
+
+      # Runs natively on the amd64 runner. -race needs cgo, which is why the
+      # cgo-free setting belongs to the build target rather than to the job.
+      - name: Test
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        run: go tool cover -func=coverage.out | tail -n 1
+
+      # Produces the linux/arm64 bootstrap binaries, exactly as a local
+      # `make build` does.
+      - name: Build for linux/arm64
+        run: make build
+
+      - name: Check that the binaries are arm64 and statically linked
+        run: file bin/*/bootstrap
+
+      # Catches an untidy go.mod, a missing go.sum, and any other file a build
+      # step left behind. coverage.out and bin/ are gitignored.
+      - name: Check that go.mod is tidy and the tree is clean
+        run: |
+          go mod tidy
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Working tree is dirty after lint, test, and build:"
+            git status --short
+            exit 1
+          fi

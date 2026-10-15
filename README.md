@@ -18,7 +18,9 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 
 - `cmd/`: future Lambda entrypoints: create-job, get-job, starter, and worker.
 - `internal/`: shared domain, storage, validation, processing, quota, and logging packages.
-- `infra/`, `web/`, and CI configuration will be added when implementation begins.
+- `.github/workflows/ci.yml`: lint, test, and linux/arm64 build on every push
+  and pull request.
+- `infra/` and `web/` will be added when implementation begins.
 
 The worker placeholder will be split into individual processing Lambda commands
 as those steps are implemented. `cmd/` holds executable entrypoints; `internal/`
@@ -36,7 +38,8 @@ make build
 make fmt
 ```
 
-`make lint` checks errors, static analysis, unused code, and formatting.
+`make lint` checks errors, static analysis, unused code, and formatting. CI runs
+the same targets, so a green `make lint test build` locally means a green build.
 `make fmt` applies gofmt and goimports. `make build` produces Linux/arm64
 executables at `bin/<command>/bootstrap` with cgo disabled. These are still
 placeholder commands, not functioning Lambda handlers.
