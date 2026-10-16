@@ -27,8 +27,10 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `internal/store`: the single-table DynamoDB persistence behind a `JobStore`
   interface.
 - `internal/storage`: presigned S3 uploads behind a `Storage` interface.
-- `internal/`: the remaining shared storage, validation, processing, and quota
-  packages.
+- `internal/validation`: recognizes documents by their leading bytes.
+- `internal/ocr`: the `Client` interface, the Tesseract subprocess, and a fake.
+- `internal/quota`: the per-user daily allowance for paid OCR.
+- `internal/`: the remaining shared processing packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
 - `docs/adr/`: architecture decision records.
@@ -172,6 +174,8 @@ on code that does not ship.
 | `LOG_LEVEL` | `internal/logging` | `debug`, `info` (default), `warn`, or `error` |
 | `TABLE_NAME` | `internal/store` | the single DynamoDB table; required |
 | `DYNAMODB_ENDPOINT` | `internal/store` | overrides the endpoint, for DynamoDB Local |
+| `OCR_PROVIDER` | `internal/ocr` | `tesseract` (default) or `textract` |
+| `TEXTRACT_DAILY_PAGES` | `internal/quota` | paid pages per user per UTC day, 20 by default; `0` refuses every fallback |
 | `UPLOAD_BUCKET` | `internal/storage` | the private upload bucket; required |
 | `S3_ENDPOINT` | `internal/storage` | overrides the endpoint and uses path style, for MinIO |
 

@@ -11,10 +11,11 @@ import (
 // Key prefixes and the sort key of the single result item. They are part of
 // the table contract in AGENTS.md.
 const (
-	userPrefix = "USER#"
-	jobPrefix  = "JOB#"
-	stepPrefix = "STEP#"
-	resultSK   = "RESULT"
+	userPrefix  = "USER#"
+	jobPrefix   = "JOB#"
+	stepPrefix  = "STEP#"
+	quotaPrefix = "QUOTA#"
+	resultSK    = "RESULT"
 )
 
 // Attribute names. ttlAttr is the one the table's TTL setting must name.
@@ -24,6 +25,21 @@ const (
 	statusAttr = "status"
 	ttlAttr    = "expiresAt"
 )
+
+// Exported for internal/quota, which owns the QUOTA# items but has to write
+// them with the same keys and TTL attribute as everything else in the table.
+// The layout lives here so the two cannot drift apart.
+const (
+	PKAttr  = pkAttr
+	SKAttr  = skAttr
+	TTLAttr = ttlAttr
+)
+
+// UserPK returns the partition key holding everything owned by one user.
+func UserPK(userID string) string { return userPK(userID) }
+
+// QuotaSK returns the sort key for a user's counter on one UTC day.
+func QuotaSK(day time.Time) string { return quotaPrefix + day.UTC().Format(time.DateOnly) }
 
 func userPK(userID string) string       { return userPrefix + userID }
 func jobSK(jobID string) string         { return jobPrefix + jobID }
