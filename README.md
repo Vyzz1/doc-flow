@@ -30,6 +30,7 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `internal/validation`: recognizes documents by their leading bytes.
 - `internal/ocr`: the `Client` interface, the Tesseract subprocess, and a fake.
 - `internal/quota`: the per-user daily allowance for paid OCR.
+- `internal/preprocess`: normalizes pages for OCR and makes thumbnails.
 - `internal/`: the remaining shared processing packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
