@@ -799,3 +799,21 @@ func TestNewFromEnv(t *testing.T) {
 		t.Error("NewFromEnv() built a store with no client")
 	}
 }
+
+func TestExportedKeyHelpers(t *testing.T) {
+	// internal/quota builds its items from these, so the formats are part of
+	// the table contract rather than an implementation detail.
+	if got := UserPK(testUser); got != "USER#"+testUser {
+		t.Errorf("UserPK() = %q, want USER#%s", got, testUser)
+	}
+	if got := QuotaSK(testNow); got != "QUOTA#2026-10-15" {
+		t.Errorf("QuotaSK() = %q, want QUOTA#2026-10-15", got)
+	}
+
+	// The day is the UTC one, not the caller's.
+	ict := time.FixedZone("ICT", 7*60*60)
+	lateEvening := time.Date(2026, 10, 16, 1, 30, 0, 0, ict) // 2026-10-15 18:30 UTC
+	if got := QuotaSK(lateEvening); got != "QUOTA#2026-10-15" {
+		t.Errorf("QuotaSK() = %q for %s, want the UTC day", got, lateEvening)
+	}
+}
