@@ -5,7 +5,7 @@
 package main
 
 import (
-	"fmt"
+	"path/filepath"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
@@ -43,7 +43,16 @@ type DocFlowStackProps struct {
 	// this for the presigned POST; it grants nothing on its own, since the
 	// signed policy is what authorizes the write.
 	UploadOrigins []string
+
+	// AssetRoot holds one directory per command, each with a compiled
+	// bootstrap. It defaults to ../bin, which is what `make build` fills.
+	// Tests point it at a throwaway directory so they do not need the Go
+	// build to have run.
+	AssetRoot string
 }
+
+// defaultAssetRoot is where `make build` puts the compiled Lambdas.
+const defaultAssetRoot = "../bin"
 
 // DocFlowStack holds the storage and compute the API needs.
 //
@@ -106,11 +115,16 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 		AutoDeleteObjects: jsii.Bool(props.Stage != StageProd),
 	})
 
-	createJob := goFunction(stack, "CreateJob", "create-job", props.Stage, map[string]*string{
+	assetRoot := props.AssetRoot
+	if assetRoot == "" {
+		assetRoot = defaultAssetRoot
+	}
+
+	createJob := goFunction(stack, "CreateJob", "create-job", props.Stage, assetRoot, map[string]*string{
 		"TABLE_NAME":    table.TableName(),
 		"UPLOAD_BUCKET": uploads.BucketName(),
 	})
-	getJob := goFunction(stack, "GetJob", "get-job", props.Stage, map[string]*string{
+	getJob := goFunction(stack, "GetJob", "get-job", props.Stage, assetRoot, map[string]*string{
 		"TABLE_NAME": table.TableName(),
 	})
 
@@ -154,9 +168,9 @@ func uploadOrigins(configured []string) []string {
 
 // goFunction wires one of the compiled Go binaries up as a Lambda.
 //
-// The asset is bin/<command>, which `make build` fills with a linux/arm64
-// bootstrap. Run it before synth or the asset is missing.
-func goFunction(scope constructs.Construct, id, command string, stage Stage, environment map[string]*string) awslambda.Function {
+// The asset is <assetRoot>/<command>, which `make build` fills with a
+// linux/arm64 bootstrap. Run it before synth or the asset is missing.
+func goFunction(scope constructs.Construct, id, command string, stage Stage, assetRoot string, environment map[string]*string) awslambda.Function {
 	logGroup := awslogs.NewLogGroup(scope, jsii.String(id+"Logs"), &awslogs.LogGroupProps{
 		// Without this the group never expires, and the bill grows on its own.
 		Retention:     awslogs.RetentionDays_ONE_WEEK,
@@ -176,7 +190,7 @@ func goFunction(scope constructs.Construct, id, command string, stage Stage, env
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
 		Architecture: awslambda.Architecture_ARM_64(),
 		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String(fmt.Sprintf("../bin/%s", command)), nil),
+		Code:         awslambda.Code_FromAsset(jsii.String(filepath.Join(assetRoot, command)), nil),
 		MemorySize:   jsii.Number(256),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(10)),
 		Environment:  &env,

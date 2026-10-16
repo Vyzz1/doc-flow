@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +14,37 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/assertions"
 	"github.com/aws/jsii-runtime-go"
 )
+
+// assetRoot holds throwaway stand-ins for the compiled Lambdas, so these
+// tests do not need `make build` to have run. The stack only checks that each
+// asset directory exists; what the file contains never reaches an assertion.
+var assetRoot string
+
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "docflow-assets")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create asset root:", err)
+		os.Exit(1)
+	}
+	for _, command := range []string{"create-job", "get-job"} {
+		dir := filepath.Join(root, command)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "create asset directory:", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "bootstrap"), []byte("stand-in"), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "write bootstrap:", err)
+			os.Exit(1)
+		}
+	}
+	assetRoot = root
+
+	code := m.Run()
+	if err := os.RemoveAll(root); err != nil {
+		fmt.Fprintln(os.Stderr, "remove asset root:", err)
+	}
+	os.Exit(code)
+}
 
 // Synthesizing goes through jsii, which drives the CDK's JavaScript in a Node
 // subprocess, so it costs seconds rather than milliseconds. Each stage is
@@ -38,7 +72,8 @@ func synthesize(stage Stage) assertions.Template {
 				Region:  jsii.String("ap-southeast-1"),
 			},
 		},
-		Stage: stage,
+		Stage:     stage,
+		AssetRoot: assetRoot,
 	})
 	return assertions.Template_FromStack(stack, nil)
 }
