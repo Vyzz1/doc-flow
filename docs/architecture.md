@@ -24,23 +24,74 @@ Nothing has run on AWS. See [What is not verified](#what-is-not-verified).
 
 ## Flow
 
-What runs today:
+What runs today. Dashed edges are failure paths.
 
-```
-client ──POST /jobs──> create-job ──> job PENDING in DynamoDB
-                             └──────> presigned POST for uploads/<user>/<job>
+```mermaid
+flowchart TD
+    client(["Client"])
 
-client ──multipart POST──> S3 uploads/ ──event──> SQS ──> starter
-                                                   │         │
-                                                 DLQ         └──> Step Functions
-                                                                    Validate ──> MarkDone
-                                                                        └─catch─> MarkFailed
+    subgraph api["API — nothing routes to these yet"]
+        createJob["create-job"]
+        getJob["get-job"]
+    end
 
-client ──GET /jobs/{id}──> get-job ──> job, per-step progress, result when DONE
+    subgraph processing["Processing"]
+        queue["SQS"]
+        dlq["Dead letters"]
+        starter["starter"]
+
+        subgraph workflow["Step Functions"]
+            validate["Validate"]
+            markDone["MarkDone"]
+            markFailed["MarkFailed"]
+        end
+    end
+
+    table[("DynamoDB<br/>single table")]
+    bucket[("S3<br/>uploads/")]
+
+    client -->|"POST /jobs"| createJob
+    createJob -->|"job PENDING"| table
+    createJob -->|"presigned POST"| client
+    client -->|"multipart POST"| bucket
+    bucket -->|"ObjectCreated, uploads/ only"| queue
+    queue --> starter
+    queue -.->|"after 3 failures"| dlq
+    starter -->|"PENDING to PROCESSING"| table
+    starter -->|"execution named after the job"| validate
+    validate --> markDone
+    validate -.->|"catch"| markFailed
+    markDone -->|"DONE"| table
+    markFailed -->|"FAILED"| table
+    client -->|"GET /jobs/id"| getJob
+    getJob --> table
 ```
 
 `create-job` and `get-job` have no route in front of them yet. The workflow
-ends after validation; the recognition steps are written but not wired in.
+ends after validation.
+
+### Where the rest goes
+
+The recognition packages are written and tested but have no states. This is
+the shape they slot into, not code that exists:
+
+```mermaid
+flowchart LR
+    validate["Validate"] --> preprocess["Preprocess"]
+    validate --> thumbnail["Thumbnail"]
+    preprocess --> ocr["OCR"]
+    thumbnail --> ocr
+    ocr --> extract["Extract"]
+    extract --> save["Save"]
+    save --> markDone["MarkDone"]
+
+    ocr -.->|"low confidence,<br/>within the daily quota"| textract["Textract"]
+    textract --> extract
+```
+
+Preprocess and Thumbnail run in parallel. Every state is one billed
+transition per job, which is what keeps the chain short; see
+[Cost](#cost).
 
 ## Components
 
@@ -115,10 +166,16 @@ The recognition packages — `internal/preprocess`, `internal/ocr`,
 
 ## The job lifecycle
 
-```
-PENDING ───> PROCESSING ───> DONE
-   │                └──────> FAILED
-   └───────────────────────> FAILED
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: create-job records it
+    PENDING --> PROCESSING: the starter claims it
+    PENDING --> FAILED: rejected before any work
+    PROCESSING --> DONE
+    PROCESSING --> FAILED
+    PENDING --> [*]: TTL, nobody uploaded
+    DONE --> [*]
+    FAILED --> [*]
 ```
 
 Every move is a conditional write pinned to the expected current status, so
