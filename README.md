@@ -13,7 +13,8 @@ Standard -> validate -> preprocess and thumbnail -> OCR -> extract -> save resul
 The client polls job status through the get-job API.
 
 Tesseract is the default OCR provider. Textract fallback requires a per-user daily
-quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constraints.
+quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit;
+[AGENTS.md](AGENTS.md) holds the constraints they answer to.
 
 ## Layout
 
@@ -35,6 +36,8 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `internal/`: the remaining shared processing packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
+- `docs/architecture.md`: how the pieces fit, what is decided, and what is
+  not verified.
 - `docs/adr/`: architecture decision records.
 - `infra/`: the CDK app, a separate Go module holding the table, bucket, and
   Lambdas.
