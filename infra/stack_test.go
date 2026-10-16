@@ -712,3 +712,132 @@ func TestWorkflowPermissions(t *testing.T) {
 		}
 	})
 }
+
+func TestUserPool(t *testing.T) {
+	props := properties(t, only(t, template(t, StageDev), "AWS::Cognito::UserPool"))
+
+	t.Run("stays on the cheapest plan that signs a token", func(t *testing.T) {
+		// AWS defaults a new pool to Essentials. Both plans are free below
+		// ten thousand monthly active users, but the rate beyond differs by
+		// about three times, and nothing here uses what Essentials adds.
+		if got := props["UserPoolTier"]; got != "LITE" {
+			t.Errorf("UserPoolTier = %v, want LITE", got)
+		}
+	})
+
+	t.Run("does not let the internet create accounts", func(t *testing.T) {
+		admin, ok := props["AdminCreateUserConfig"].(map[string]any)
+		if !ok {
+			t.Fatalf("no AdminCreateUserConfig: %v", props)
+		}
+		if admin["AllowAdminCreateUserOnly"] != true {
+			t.Error("self sign-up is on, so anyone could mint themselves a user id")
+		}
+	})
+
+	t.Run("asks for a password worth having", func(t *testing.T) {
+		encoded, _ := json.Marshal(props["Policies"])
+		for _, want := range []string{`"MinimumLength":12`, `"RequireNumbers":true`, `"RequireSymbols":true`} {
+			if !strings.Contains(string(encoded), want) {
+				t.Errorf("password policy %s is missing %s", encoded, want)
+			}
+		}
+	})
+}
+
+func TestUserPoolClient(t *testing.T) {
+	t.Run("holds no secret, because its clients cannot", func(t *testing.T) {
+		props := properties(t, only(t, template(t, StageDev), "AWS::Cognito::UserPoolClient"))
+		if props["GenerateSecret"] == true {
+			t.Error("the client has a secret, which a browser cannot keep")
+		}
+	})
+
+	t.Run("allows plain passwords in dev only", func(t *testing.T) {
+		// It is the difference between getting a token with one CLI call
+		// and standing up a login page first, which is worth it in dev and
+		// not in production.
+		tests := []struct {
+			stage Stage
+			want  bool
+		}{
+			{stage: StageDev, want: true},
+			{stage: StageProd, want: false},
+		}
+		for _, tt := range tests {
+			t.Run(string(tt.stage), func(t *testing.T) {
+				props := properties(t, only(t, template(t, tt.stage), "AWS::Cognito::UserPoolClient"))
+				flows := asList(props["ExplicitAuthFlows"])
+				got := slices.Contains(flows, "ALLOW_USER_PASSWORD_AUTH")
+				if got != tt.want {
+					t.Errorf("ALLOW_USER_PASSWORD_AUTH = %v in %s, want %v (flows: %v)", got, tt.stage, tt.want, flows)
+				}
+				if !slices.Contains(flows, "ALLOW_USER_SRP_AUTH") {
+					t.Errorf("SRP is not enabled, so a real client cannot sign in: %v", flows)
+				}
+			})
+		}
+	})
+}
+
+func TestApi(t *testing.T) {
+	tpl := template(t, StageDev)
+
+	t.Run("is an HTTP API, not a REST one", func(t *testing.T) {
+		// About a third of the price, and nothing here needs what the REST
+		// flavour charges for.
+		props := properties(t, only(t, tpl, "AWS::ApiGatewayV2::Api"))
+		if got := props["ProtocolType"]; got != "HTTP" {
+			t.Errorf("ProtocolType = %v, want HTTP", got)
+		}
+	})
+
+	t.Run("trusts only this pool's tokens, for this client", func(t *testing.T) {
+		props := properties(t, only(t, tpl, "AWS::ApiGatewayV2::Authorizer"))
+		if got := props["AuthorizerType"]; got != "JWT" {
+			t.Errorf("AuthorizerType = %v, want JWT", got)
+		}
+		encoded, _ := json.Marshal(props["JwtConfiguration"])
+		// Without an audience, a token minted for any other client of the
+		// same pool would be accepted.
+		if !strings.Contains(string(encoded), "Audience") {
+			t.Errorf("no audience is pinned: %s", encoded)
+		}
+		if !strings.Contains(string(encoded), "cognito-idp") {
+			t.Errorf("the issuer is not this pool: %s", encoded)
+		}
+	})
+
+	// The one that matters. A route added without an authorizer is open to
+	// the internet, and the handlers behind these two read and write
+	// whatever user the token names.
+	t.Run("leaves no route open", func(t *testing.T) {
+		routes := resources(t, tpl, "AWS::ApiGatewayV2::Route")
+		if len(routes) != 2 {
+			t.Fatalf("found %d routes, want 2", len(routes))
+		}
+		for name, route := range routes {
+			props := properties(t, route)
+			if got := props["AuthorizationType"]; got != "JWT" {
+				t.Errorf("route %s (%v) has AuthorizationType %v, want JWT", name, props["RouteKey"], got)
+			}
+			if props["AuthorizerId"] == nil {
+				t.Errorf("route %s (%v) names no authorizer", name, props["RouteKey"])
+			}
+		}
+	})
+
+	t.Run("exposes the two routes the handlers serve", func(t *testing.T) {
+		var keys []string
+		for _, route := range resources(t, tpl, "AWS::ApiGatewayV2::Route") {
+			if key, ok := properties(t, route)["RouteKey"].(string); ok {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		want := []string{"GET /jobs/{id}", "POST /jobs"}
+		if !slices.Equal(keys, want) {
+			t.Errorf("routes = %v, want %v", keys, want)
+		}
+	})
+}

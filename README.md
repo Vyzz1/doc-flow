@@ -87,9 +87,25 @@ environment, frontend lint, and CDK checks remain TODOs for the next stage.
 
 ## API
 
-Two endpoints exist. Both sit behind a JWT authorizer, and both read the
-caller from the verified `sub` claim rather than from anything the client
-sends.
+Two endpoints, both behind an HTTP API with a Cognito JWT authorizer. Each
+reads its caller from the verified `sub` claim rather than from anything the
+client sends, and that claim is the storage key: a job lives under
+`USER#<sub>`, so one user's id cannot reach another's data.
+
+Every route names the authorizer explicitly. The API sets no default one, so
+a route that forgot it would be open rather than quietly protected, and a
+test asserts none is.
+
+Getting a token in dev, where the app client allows plain passwords:
+
+```sh
+aws cognito-idp admin-create-user --user-pool-id "$POOL" --username you@example.test
+aws cognito-idp admin-set-user-password --user-pool-id "$POOL"   --username you@example.test --password '...' --permanent
+aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH   --client-id "$CLIENT" --auth-parameters USERNAME=you@example.test,PASSWORD='...'
+```
+
+Production allows SRP only, and self sign-up is off everywhere: anyone who
+could create an account could choose their own `sub`.
 
 ### `POST /jobs`
 

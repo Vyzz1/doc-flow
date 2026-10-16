@@ -57,11 +57,9 @@ type DocFlowStackProps struct {
 // defaultAssetRoot is where `make build` puts the compiled Lambdas.
 const defaultAssetRoot = "../bin"
 
-// DocFlowStack holds the storage and compute the API needs.
-//
-// There is deliberately no API Gateway yet: the handlers read their caller
-// from a JWT authorizer, and which issuer signs those tokens is still open.
-// Adding the HTTP API is the first job of the next phase.
+// DocFlowStack holds everything the service runs on: the table, the upload
+// bucket, the functions, the queue, the workflow, the user directory, and
+// the HTTP API in front of it all.
 //
 // Nothing here runs when idle. DynamoDB is on-demand, Lambda bills per
 // invocation, and the log groups expire, which is the one cost that otherwise
@@ -142,6 +140,9 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	})
 
 	workflow := newWorkflow(stack, validate, finish, removalPolicy)
+
+	users := newIdentity(stack, props.Stage, removalPolicy)
+	api := newHttpApi(stack, users, createJob, getJob)
 
 	// A dead-letter queue the main queue gives up into, rather than
 	// redelivering a message that has already failed three times.
@@ -232,6 +233,15 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("UploadBucket"), &awscdk.CfnOutputProps{
 		Value: uploads.BucketName(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("ApiUrl"), &awscdk.CfnOutputProps{
+		Value: api.Url(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("UserPoolId"), &awscdk.CfnOutputProps{
+		Value: users.pool.UserPoolId(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("UserPoolClientId"), &awscdk.CfnOutputProps{
+		Value: users.client.UserPoolClientId(),
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("StateMachine"), &awscdk.CfnOutputProps{
 		Value: workflow.StateMachineArn(),
