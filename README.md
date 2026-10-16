@@ -17,11 +17,13 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 
 ## Layout
 
-- `cmd/`: future Lambda entrypoints: create-job, get-job, starter, and worker.
+- `cmd/create-job`, `cmd/get-job`: the API Lambdas. `cmd/starter` and
+  `cmd/worker` are still placeholders.
 - `internal/model`: domain types: `Job` and its status state machine,
   `StepResult`, `DocumentResult`, and the `WorkflowInput` payload passed between
   Step Functions states.
 - `internal/logging`: structured JSON logging carrying `jobId` and `userId`.
+- `internal/api`: the HTTP API's request handling, so the entrypoints stay thin.
 - `internal/store`: the single-table DynamoDB persistence behind a `JobStore`
   interface.
 - `internal/storage`: presigned S3 uploads behind a `Storage` interface.
@@ -66,6 +68,44 @@ behavior has been implemented.
 Integration tests against DynamoDB Local are **not** wired up yet, so there is
 no `make test-int` target despite AGENTS.md mentioning one. The local Docker
 environment, frontend lint, and CDK checks remain TODOs for the next stage.
+
+## API
+
+Two endpoints exist. Both sit behind a JWT authorizer, and both read the
+caller from the verified `sub` claim rather than from anything the client
+sends.
+
+### `POST /jobs`
+
+```json
+{ "docType": "invoice", "contentType": "application/pdf" }
+```
+
+Returns `201` with the job id and a presigned upload:
+
+```json
+{
+  "jobId": "01J8ZQJ9X7K3M4N5P6Q7R8S9TV",
+  "status": "PENDING",
+  "uploadUrl": "https://<bucket>.s3.amazonaws.com",
+  "uploadFields": { "key": "uploads/<user>/<job>", "policy": "..." },
+  "maxBytes": 10485760,
+  "expiresAt": "2026-10-16T08:45:00Z"
+}
+```
+
+The client then sends `multipart/form-data` to `uploadUrl`: every pair in
+`uploadFields` first, then the file. It is a POST rather than a PUT because
+only a POST policy can bound the body size, which S3 then enforces itself.
+
+### `GET /jobs/{id}`
+
+Returns the job, its per-step progress, and, once the job is `DONE`, its
+result. Ownership needs no separate check: a job lives under its owner's
+partition key, so another user's id simply does not find it, and a caller
+cannot learn whether someone else's job exists.
+
+A malformed id is rejected before any read, so a bad path costs no capacity.
 
 ## Configuration
 
