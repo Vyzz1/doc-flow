@@ -35,7 +35,7 @@ Dashboard: static React app on S3 + CloudFront
 | Area | Choice |
 |---|---|
 | Lambda code | Go, `arm64`, runtime `provided.al2023` (OCR Lambda: container image) |
-| Infrastructure | AWS CDK in TypeScript (`infra/`) |
+| Infrastructure | AWS CDK in Go (`infra/`, its own module) |
 | Data | DynamoDB single-table design |
 | Orchestration | Step Functions Standard, SQS (+ DLQ) |
 | CI/CD | GitHub Actions (dev / prod environments) |
@@ -43,7 +43,7 @@ Dashboard: static React app on S3 + CloudFront
 ## Repository layout
 
 ```
-infra/        CDK stacks (TypeScript)
+infra/        CDK stacks (Go, a separate module)
 functions/    one directory per Lambda: create-job, starter, validate, thumbnail, ocr, extract, ...
 internal/     shared Go packages: model, store (DynamoDB repo), ocr, quota, logging
 docs/         architecture.md, ADRs, cost-analysis.md
@@ -58,8 +58,8 @@ docs/         architecture.md, ADRs, cost-analysis.md
 make build        # build all Go Lambdas (GOOS=linux GOARCH=arm64, CGO_ENABLED=0)
 make test         # unit tests: go test ./...
 make test-int     # integration tests (needs Docker: DynamoDB Local, MinIO)
-make lint         # golangci-lint run + eslint for web/ and infra/
-make synth        # cd infra && npx cdk synth
+make lint         # golangci-lint run over both Go modules (+ eslint for web/ once it exists)
+make synth        # build the Lambda assets, then cd infra && npx cdk synth
 make up           # docker compose up -d (DynamoDB Local, MinIO)
 make down         # docker compose down -v
 ```
