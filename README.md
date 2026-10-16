@@ -28,6 +28,7 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
   packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
+- `docs/adr/`: architecture decision records.
 - `infra/` and `web/` will be added when implementation begins.
 
 The worker placeholder will be split into individual processing Lambda commands

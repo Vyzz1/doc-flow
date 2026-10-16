@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,12 +342,12 @@ func TestUpdateStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateStatus() error = %v", err)
 	}
-	if got := *f.update.ConditionExpression; got != "attribute_exists(#pk) AND #status = :from" {
+	if got := *f.update.ConditionExpression; got != "attribute_exists(#pk) AND #status = :from0" {
 		t.Errorf("ConditionExpression = %q, want it to pin the current status", got)
 	}
-	from, ok := f.update.ExpressionAttributeValues[":from"].(*types.AttributeValueMemberS)
+	from, ok := f.update.ExpressionAttributeValues[":from0"].(*types.AttributeValueMemberS)
 	if !ok || from.Value != string(model.StatusPending) {
-		t.Errorf(":from = %#v, want PENDING", f.update.ExpressionAttributeValues[":from"])
+		t.Errorf(":from0 = %#v, want PENDING", f.update.ExpressionAttributeValues[":from0"])
 	}
 	to, ok := f.update.ExpressionAttributeValues[":to"].(*types.AttributeValueMemberS)
 	if !ok || to.Value != string(model.StatusProcessing) {
@@ -423,9 +424,60 @@ func TestFailJob(t *testing.T) {
 	if !ok || reason.Value != "unsupported file type" {
 		t.Errorf(":failureReason = %#v, want the trimmed reason", f.update.ExpressionAttributeValues[":failureReason"])
 	}
-	from, ok := f.update.ExpressionAttributeValues[":from"].(*types.AttributeValueMemberS)
-	if !ok || from.Value != string(model.StatusProcessing) {
-		t.Errorf(":from = %#v, want PROCESSING", f.update.ExpressionAttributeValues[":from"])
+	if got := *f.update.ConditionExpression; got != "attribute_exists(#pk) AND #status IN (:from0, :from1)" {
+		t.Errorf("ConditionExpression = %q, want an IN over the failable statuses", got)
+	}
+	// Whatever the model says may fail must appear in the condition, so the
+	// two cannot drift apart.
+	want := map[string]bool{}
+	for _, status := range model.FailableFrom() {
+		want[string(status)] = true
+	}
+	got := map[string]bool{}
+	for name, value := range f.update.ExpressionAttributeValues {
+		if strings.HasPrefix(name, ":from") {
+			got[value.(*types.AttributeValueMemberS).Value] = true
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("condition covers %v, want %v", got, want)
+	}
+	for status := range want {
+		if !got[status] {
+			t.Errorf("condition does not cover %s", status)
+		}
+	}
+}
+
+func TestFailJobFromPending(t *testing.T) {
+	// The starter rejects a bad upload before any work begins, and fails the
+	// job in one write rather than moving it through PROCESSING first.
+	f := &fakeAPI{}
+
+	if err := newTestStore(f).FailJob(context.Background(), testUser, testJobID, "magic bytes rejected", testNow); err != nil {
+		t.Fatalf("FailJob() error = %v", err)
+	}
+	if f.update == nil {
+		t.Fatal("FailJob() sent no UpdateItem")
+	}
+	to, ok := f.update.ExpressionAttributeValues[":to"].(*types.AttributeValueMemberS)
+	if !ok || to.Value != string(model.StatusFailed) {
+		t.Errorf(":to = %#v, want FAILED", f.update.ExpressionAttributeValues[":to"])
+	}
+}
+
+func TestFailJobOnFinishedJobConflicts(t *testing.T) {
+	done := testJob(t)
+	done.Status = model.StatusDone
+	stored, err := attributevalue.MarshalMap(newJobItem(done))
+	if err != nil {
+		t.Fatalf("MarshalMap() error = %v", err)
+	}
+	f := &fakeAPI{err: conditionFailed(stored)}
+
+	err = newTestStore(f).FailJob(context.Background(), testUser, testJobID, "too late", testNow)
+	if !errors.Is(err, ErrStatusConflict) {
+		t.Errorf("FailJob() on a DONE job = %v, want ErrStatusConflict", err)
 	}
 }
 

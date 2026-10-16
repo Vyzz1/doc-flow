@@ -90,7 +90,17 @@ Single table. Key design (do not change without an ADR):
 | `JOB#<id>` | `RESULT` | OCR text, extracted fields |
 | `USER#<id>` | `QUOTA#<yyyy-mm-dd>` | daily page counter (atomic `ADD`) |
 
-- Status transitions use **conditional writes**: `PENDING -> PROCESSING -> DONE|FAILED`. Never move backwards.
+- Status transitions use **conditional writes**. Never move backwards; terminal states stay terminal.
+
+  ```
+  PENDING ---> PROCESSING ---> DONE
+     |               \-------> FAILED
+     \-----------------------> FAILED
+  ```
+
+  A job fails straight from `PENDING` when the starter rejects the upload before any work begins
+  (see `docs/adr/0001-job-status-transitions.md`). `model.FailableFrom` is the single source for
+  which statuses may fail, and the store builds its condition from it.
 - All processing is **idempotent**: S3 events and SQS deliveries can repeat. Key idempotency on `jobId`.
 - Items carry a TTL (7 days) so data and uploads expire automatically.
 - Never `Scan` in application code paths. Add a GSI instead (and document it).

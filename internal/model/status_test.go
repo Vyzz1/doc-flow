@@ -56,9 +56,9 @@ func TestJobStatusValidateTransition(t *testing.T) {
 		{name: "start processing", from: StatusPending, to: StatusProcessing},
 		{name: "finish", from: StatusProcessing, to: StatusDone},
 		{name: "fail while processing", from: StatusProcessing, to: StatusFailed},
+		{name: "fail before processing", from: StatusPending, to: StatusFailed},
 
 		{name: "skip processing", from: StatusPending, to: StatusDone, wantErr: ErrInvalidTransition},
-		{name: "fail before processing", from: StatusPending, to: StatusFailed, wantErr: ErrInvalidTransition},
 		{name: "backwards", from: StatusProcessing, to: StatusPending, wantErr: ErrInvalidTransition},
 		{name: "revive done", from: StatusDone, to: StatusProcessing, wantErr: ErrInvalidTransition},
 		{name: "retry failed", from: StatusFailed, to: StatusProcessing, wantErr: ErrInvalidTransition},
@@ -78,5 +78,20 @@ func TestJobStatusValidateTransition(t *testing.T) {
 				t.Errorf("CanTransitionTo(%q) = %v, want %v", tt.to, got, tt.wantErr == nil)
 			}
 		})
+	}
+}
+
+func TestFailableFrom(t *testing.T) {
+	// The store builds its conditional write from this list, so every status
+	// in it must really allow the move, and every status that allows the move
+	// must be in it.
+	failable := map[JobStatus]bool{}
+	for _, s := range FailableFrom() {
+		failable[s] = true
+	}
+	for _, status := range []JobStatus{StatusPending, StatusProcessing, StatusDone, StatusFailed} {
+		if got, want := failable[status], status.CanTransitionTo(StatusFailed); got != want {
+			t.Errorf("FailableFrom contains %s = %v, but CanTransitionTo(FAILED) = %v", status, got, want)
+		}
 	}
 }
