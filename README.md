@@ -24,6 +24,7 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `internal/logging`: structured JSON logging carrying `jobId` and `userId`.
 - `internal/store`: the single-table DynamoDB persistence behind a `JobStore`
   interface.
+- `internal/storage`: presigned S3 uploads behind a `Storage` interface.
 - `internal/`: the remaining shared storage, validation, processing, and quota
   packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
@@ -73,6 +74,8 @@ environment, frontend lint, and CDK checks remain TODOs for the next stage.
 | `LOG_LEVEL` | `internal/logging` | `debug`, `info` (default), `warn`, or `error` |
 | `TABLE_NAME` | `internal/store` | the single DynamoDB table; required |
 | `DYNAMODB_ENDPOINT` | `internal/store` | overrides the endpoint, for DynamoDB Local |
+| `UPLOAD_BUCKET` | `internal/storage` | the private upload bucket; required |
+| `S3_ENDPOINT` | `internal/storage` | overrides the endpoint and uses path style, for MinIO |
 
 The table's TTL must be configured on the `expiresAt` attribute, which every
 item carries as Unix seconds seven days out.
