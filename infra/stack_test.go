@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "create asset root:", err)
 		os.Exit(1)
 	}
-	for _, command := range []string{"create-job", "get-job"} {
+	for _, command := range []string{"create-job", "get-job", "starter", "validate", "finish"} {
 		dir := filepath.Join(root, command)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "create asset directory:", err)
@@ -203,9 +203,11 @@ func TestFunctions(t *testing.T) {
 
 	t.Run("runs both handlers on arm64 with the provided runtime", func(t *testing.T) {
 		found := resources(t, tpl, "AWS::Lambda::Function")
-		// Two handlers plus the dev-only helper that empties the bucket.
-		if len(found) != 3 {
-			t.Fatalf("found %d functions, want 3", len(found))
+		// Five handlers, plus two helpers CDK adds: the one that delivers
+		// bucket notifications and, in dev only, the one that empties the
+		// bucket on teardown.
+		if len(found) != 7 {
+			t.Fatalf("found %d functions, want 7", len(found))
 		}
 		handlers := 0
 		for _, fn := range found {
@@ -222,15 +224,16 @@ func TestFunctions(t *testing.T) {
 				t.Errorf("Handler = %v, want bootstrap", props["Handler"])
 			}
 		}
-		if handlers != 2 {
-			t.Errorf("found %d provided.al2023 handlers, want 2", handlers)
+		if handlers != 5 {
+			t.Errorf("found %d provided.al2023 handlers, want 5", handlers)
 		}
 	})
 
 	t.Run("expires its logs, which otherwise accrue forever", func(t *testing.T) {
 		groups := resources(t, tpl, "AWS::Logs::LogGroup")
-		if len(groups) != 2 {
-			t.Fatalf("found %d log groups, want 2", len(groups))
+		// One per handler, plus the workflow's own.
+		if len(groups) != 6 {
+			t.Fatalf("found %d log groups, want 6", len(groups))
 		}
 		for name, group := range groups {
 			if got := properties(t, group)["RetentionInDays"]; got != float64(7) {
@@ -260,6 +263,26 @@ func statements(t *testing.T, tpl assertions.Template) []map[string]any {
 		}
 	}
 	return all
+}
+
+// isLogDelivery reports whether a statement is the one Step Functions needs
+// to deliver its execution logs.
+//
+// Those actions are account-level and CloudWatch accepts no resource other
+// than "*" for them, so this is the single exception the wildcard check
+// allows. It is narrow on purpose: it matches only when every action in the
+// statement is a log-delivery one.
+func isLogDelivery(statement map[string]any) bool {
+	actions := asList(statement["Action"])
+	if len(actions) == 0 {
+		return false
+	}
+	for _, action := range actions {
+		if !strings.HasPrefix(action, "logs:") {
+			return false
+		}
+	}
+	return true
 }
 
 // asList normalizes a policy field that may be a string or a list.
@@ -321,11 +344,14 @@ func TestPermissions(t *testing.T) {
 		t.Error("no statement grants dynamodb:GetItem and dynamodb:Query")
 	})
 
-	t.Run("never grants reading and writing in one statement", func(t *testing.T) {
+	// Reading a job and writing a step result is one role's work, so the
+	// pair is expected. What must never meet is the ability to read a
+	// customer's document and the ability to finish their job.
+	t.Run("nothing can both read a document and finish a job", func(t *testing.T) {
 		for _, statement := range all {
 			actions := asList(statement["Action"])
-			if slices.Contains(actions, "dynamodb:GetItem") && slices.Contains(actions, "dynamodb:PutItem") {
-				t.Errorf("one statement grants both reads and writes, so the roles were merged: %v", statement)
+			if slices.Contains(actions, "s3:GetObject") && slices.Contains(actions, "dynamodb:UpdateItem") {
+				t.Errorf("one statement grants both, so two roles were merged: %v", statement)
 			}
 		}
 	})
@@ -334,6 +360,9 @@ func TestPermissions(t *testing.T) {
 	// custom resource legitimately needs broader S3 verbs to empty the bucket.
 	t.Run("grants no wildcard action or resource in production", func(t *testing.T) {
 		for _, statement := range statements(t, template(t, StageProd)) {
+			if isLogDelivery(statement) {
+				continue
+			}
 			for _, action := range asList(statement["Action"]) {
 				if strings.Contains(action, "*") {
 					t.Errorf("wildcard action %q in %v", action, statement)
@@ -354,8 +383,8 @@ func TestStages(t *testing.T) {
 		wantFunctions int
 		wantLogLevel  string
 	}{
-		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 3, wantLogLevel: "debug"},
-		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 2, wantLogLevel: "info"},
+		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 7, wantLogLevel: "debug"},
+		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 6, wantLogLevel: "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -510,4 +539,176 @@ func TestEnvOrNil(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueue(t *testing.T) {
+	tpl := template(t, StageDev)
+
+	t.Run("gives up into a dead-letter queue", func(t *testing.T) {
+		queues := resources(t, tpl, "AWS::SQS::Queue")
+		if len(queues) != 2 {
+			t.Fatalf("found %d queues, want the main one and its dead letters", len(queues))
+		}
+		var withRedrive int
+		for _, queue := range queues {
+			props := properties(t, queue)
+			policy, ok := props["RedrivePolicy"].(map[string]any)
+			if !ok {
+				continue
+			}
+			withRedrive++
+			// Three attempts, then stop: a message that has failed three
+			// times will fail the fourth, and redelivering it forever keeps
+			// the queue busy for nothing.
+			if policy["maxReceiveCount"] != float64(3) {
+				t.Errorf("maxReceiveCount = %v, want 3", policy["maxReceiveCount"])
+			}
+		}
+		if withRedrive != 1 {
+			t.Errorf("%d queues have a redrive policy, want exactly the main one", withRedrive)
+		}
+	})
+
+	t.Run("hides a message for longer than the starter can run", func(t *testing.T) {
+		// Otherwise SQS hands the same upload to a second invocation while
+		// the first is still working on it.
+		var timeout, functionTimeout float64
+		for _, queue := range resources(t, tpl, "AWS::SQS::Queue") {
+			props := properties(t, queue)
+			if _, isMain := props["RedrivePolicy"]; !isMain {
+				continue
+			}
+			timeout, _ = props["VisibilityTimeout"].(float64)
+		}
+		for _, fn := range resources(t, tpl, "AWS::Lambda::Function") {
+			props := properties(t, fn)
+			// CDK's own helper functions default to fifteen minutes and
+			// never read this queue, so only this project's handlers count.
+			if props["Runtime"] != "provided.al2023" {
+				continue
+			}
+			if value, ok := props["Timeout"].(float64); ok && value > functionTimeout {
+				functionTimeout = value
+			}
+		}
+		if timeout <= functionTimeout {
+			t.Errorf("visibility timeout %v is not longer than the longest function timeout %v", timeout, functionTimeout)
+		}
+	})
+
+	t.Run("reacts only to uploads", func(t *testing.T) {
+		// The pipeline writes its own derived artifacts into this bucket.
+		// Reacting to those would start a workflow for something it just
+		// produced.
+		encoded, _ := json.Marshal(resources(t, tpl, "Custom::S3BucketNotifications"))
+		if !strings.Contains(string(encoded), `"Name":"prefix","Value":"uploads/"`) {
+			t.Errorf("the notification is not filtered to uploads/: %s", encoded)
+		}
+	})
+
+	t.Run("reports partial batch failures", func(t *testing.T) {
+		// One bad message must not force SQS to redeliver the good ones
+		// beside it.
+		mappings := resources(t, tpl, "AWS::Lambda::EventSourceMapping")
+		if len(mappings) != 1 {
+			t.Fatalf("found %d event source mappings, want 1", len(mappings))
+		}
+		for _, mapping := range mappings {
+			encoded, _ := json.Marshal(properties(t, mapping)["FunctionResponseTypes"])
+			if !strings.Contains(string(encoded), "ReportBatchItemFailures") {
+				t.Errorf("FunctionResponseTypes = %s, want ReportBatchItemFailures", encoded)
+			}
+		}
+	})
+}
+
+func TestWorkflow(t *testing.T) {
+	tpl := template(t, StageDev)
+	machine := properties(t, only(t, tpl, "AWS::StepFunctions::StateMachine"))
+	definition, _ := json.Marshal(machine["DefinitionString"])
+	asl := string(definition)
+
+	t.Run("is a standard workflow", func(t *testing.T) {
+		// Express bills for duration whether or not anything is happening,
+		// and these executions are long and rare.
+		if got := machine["StateMachineType"]; got != "STANDARD" {
+			t.Errorf("StateMachineType = %v, want STANDARD", got)
+		}
+	})
+
+	t.Run("retries only what is worth retrying", func(t *testing.T) {
+		if !strings.Contains(asl, transientErrorName) {
+			t.Errorf("no retry rule names %s: %s", transientErrorName, asl)
+		}
+		// A permanent failure must fall straight through to the catch. If
+		// it appeared in a retry rule, a malformed upload would occupy the
+		// workflow for a minute before failing.
+		if strings.Contains(asl, `\"Retry\":[{\"ErrorEquals\":[\"`+permanentErrorName) {
+			t.Errorf("a retry rule names %s: %s", permanentErrorName, asl)
+		}
+	})
+
+	t.Run("catches everything and marks the job failed", func(t *testing.T) {
+		if !strings.Contains(asl, "States.ALL") {
+			t.Errorf("no catch-all: %s", asl)
+		}
+		if !strings.Contains(asl, "MarkFailed") {
+			t.Errorf("nothing routes to MarkFailed: %s", asl)
+		}
+	})
+
+	t.Run("stays short, because transitions are the billed unit", func(t *testing.T) {
+		// Step Functions Standard allows four thousand transitions a month
+		// on the free tier. Each state here is one per job.
+		for _, state := range []string{"Validate", "MarkDone", "MarkFailed"} {
+			if !strings.Contains(asl, state) {
+				t.Errorf("state %s is missing: %s", state, asl)
+			}
+		}
+		if count := strings.Count(asl, `\"Type\":\"Task\"`); count != 3 {
+			t.Errorf("the workflow has %d task states, want 3", count)
+		}
+	})
+}
+
+func TestWorkflowPermissions(t *testing.T) {
+	all := statements(t, template(t, StageDev))
+
+	t.Run("only the starter may launch an execution", func(t *testing.T) {
+		var launchers int
+		for _, statement := range all {
+			if slices.Contains(asList(statement["Action"]), "states:StartExecution") {
+				launchers++
+			}
+		}
+		if launchers != 1 {
+			t.Errorf("%d statements grant states:StartExecution, want 1", launchers)
+		}
+	})
+
+	t.Run("nothing but the finish step may write a job status", func(t *testing.T) {
+		// UpdateItem is how a status changes. The starter needs it to claim
+		// a job; everything else must not be able to finish one.
+		var updaters int
+		for _, statement := range all {
+			if slices.Contains(asList(statement["Action"]), "dynamodb:UpdateItem") {
+				updaters++
+			}
+		}
+		if updaters != 2 {
+			t.Errorf("%d statements grant dynamodb:UpdateItem, want the starter and the finish step", updaters)
+		}
+	})
+
+	t.Run("only validate reads an uploaded document", func(t *testing.T) {
+		var readers int
+		for _, statement := range all {
+			if slices.Contains(asList(statement["Action"]), "s3:GetObject") {
+				readers++
+			}
+		}
+		if readers != 1 {
+			t.Errorf("%d statements grant s3:GetObject, want only validate", readers)
+		}
+	})
 }

@@ -30,11 +30,27 @@ type Upload struct {
 	ExpiresAt time.Time
 }
 
-// Storage hands out presigned uploads. Later steps will extend this with
-// artifact reads and writes; a handler takes the interface so tests can fake
-// it without an S3.
+// Storage hands out presigned uploads. A handler takes the interface so
+// tests can fake it without an S3.
 type Storage interface {
 	// PresignUpload returns an upload for key, limited to contentType and
 	// maxBytes, valid for ttl.
 	PresignUpload(ctx context.Context, key, contentType string, maxBytes int64, ttl time.Duration) (Upload, error)
+}
+
+// Documents reads what clients uploaded. It is separate from Storage because
+// the steps that read an object never hand out an upload, and the two have
+// different permissions.
+type Documents interface {
+	// Size returns an object's length without transferring it.
+	Size(ctx context.Context, key string) (int64, error)
+
+	// ReadHeader returns an object's first n bytes. The validate step needs
+	// only a handful, and a ranged read keeps a ten megabyte scan out of a
+	// Lambda that has no use for it.
+	ReadHeader(ctx context.Context, key string, n int64) ([]byte, error)
+
+	// Read returns a whole object. Callers are responsible for knowing it
+	// fits: the upload policy caps one at model.MaxUploadBytes.
+	Read(ctx context.Context, key string) ([]byte, error)
 }

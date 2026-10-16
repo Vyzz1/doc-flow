@@ -2,7 +2,7 @@
 
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
-COMMANDS := create-job get-job starter worker
+COMMANDS := create-job get-job starter validate finish
 BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra

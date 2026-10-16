@@ -11,8 +11,11 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdaeventsources"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3notifications"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -128,6 +131,57 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 		"TABLE_NAME": table.TableName(),
 	})
 
+	// The workflow's steps. Only validate reads the uploaded object; finish
+	// only writes a status.
+	validate := goFunction(stack, "Validate", "validate", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME":    table.TableName(),
+		"UPLOAD_BUCKET": uploads.BucketName(),
+	})
+	finish := goFunction(stack, "Finish", "finish", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME": table.TableName(),
+	})
+
+	workflow := newWorkflow(stack, validate, finish, removalPolicy)
+
+	// A dead-letter queue the main queue gives up into, rather than
+	// redelivering a message that has already failed three times.
+	deadLetters := awssqs.NewQueue(stack, jsii.String("UploadsDLQ"), &awssqs.QueueProps{
+		RetentionPeriod: awscdk.Duration_Days(jsii.Number(retentionDays)),
+		EnforceSSL:      jsii.Bool(true),
+		RemovalPolicy:   removalPolicy,
+	})
+	queue := awssqs.NewQueue(stack, jsii.String("UploadsQueue"), &awssqs.QueueProps{
+		// Longer than the starter's timeout, or SQS would hand the same
+		// message to a second invocation while the first is still working.
+		VisibilityTimeout: awscdk.Duration_Seconds(jsii.Number(180)),
+		RetentionPeriod:   awscdk.Duration_Days(jsii.Number(retentionDays)),
+		EnforceSSL:        jsii.Bool(true),
+		DeadLetterQueue: &awssqs.DeadLetterQueue{
+			Queue:           deadLetters,
+			MaxReceiveCount: jsii.Number(3),
+		},
+		RemovalPolicy: removalPolicy,
+	})
+
+	// Only uploads start a workflow. The derived artifacts this pipeline
+	// writes land under other prefixes, and reacting to those would loop.
+	uploads.AddEventNotification(
+		awss3.EventType_OBJECT_CREATED,
+		awss3notifications.NewSqsDestination(queue),
+		&awss3.NotificationKeyFilter{Prefix: jsii.String("uploads/")},
+	)
+
+	starter := goFunction(stack, "Starter", "starter", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME":        table.TableName(),
+		"STATE_MACHINE_ARN": workflow.StateMachineArn(),
+	})
+	starter.AddEventSource(awslambdaeventsources.NewSqsEventSource(queue, &awslambdaeventsources.SqsEventSourceProps{
+		BatchSize: jsii.Number(10),
+		// The starter answers with the messages that failed, so SQS
+		// redelivers only those rather than the whole batch.
+		ReportBatchItemFailures: jsii.Bool(true),
+	}))
+
 	// Permissions are written out rather than taken from GrantWriteData and
 	// friends, which hand over more verbs than either function uses.
 	createJob.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
@@ -146,11 +200,44 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 		Resources: &[]*string{table.TableArn()},
 	}))
 
+	// The starter reads a job to check it exists, moves it to PROCESSING,
+	// and launches one execution. It never reads the document.
+	starter.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:GetItem", "dynamodb:UpdateItem"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	starter.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("states:StartExecution"),
+		Resources: &[]*string{workflow.StateMachineArn()},
+	}))
+
+	// Validate reads the object's head and records one step result. It
+	// cannot write a job's status, which is the finish step's job alone.
+	validate.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:GetItem", "dynamodb:PutItem"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	validate.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("s3:GetObject"),
+		Resources: &[]*string{uploads.ArnForObjects(jsii.String("uploads/*"))},
+	}))
+
+	finish.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:UpdateItem"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+
 	awscdk.NewCfnOutput(stack, jsii.String("TableName"), &awscdk.CfnOutputProps{
 		Value: table.TableName(),
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("UploadBucket"), &awscdk.CfnOutputProps{
 		Value: uploads.BucketName(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("StateMachine"), &awscdk.CfnOutputProps{
+		Value: workflow.StateMachineArn(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("DeadLetterQueue"), &awscdk.CfnOutputProps{
+		Value: deadLetters.QueueUrl(),
 	})
 
 	return stack

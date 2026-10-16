@@ -17,8 +17,8 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 
 ## Layout
 
-- `cmd/create-job`, `cmd/get-job`: the API Lambdas. `cmd/starter` and
-  `cmd/worker` are still placeholders.
+- `cmd/`: the Lambdas. `create-job` and `get-job` serve the API;
+  `starter`, `validate`, and `finish` make up the processing workflow.
 - `internal/model`: domain types: `Job` and its status state machine,
   `StepResult`, `DocumentResult`, and the `WorkflowInput` payload passed between
   Step Functions states.
@@ -31,6 +31,7 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `internal/ocr`: the `Client` interface, the Tesseract subprocess, and a fake.
 - `internal/quota`: the per-user daily allowance for paid OCR.
 - `internal/preprocess`: normalizes pages for OCR and makes thumbnails.
+- `internal/pipeline`: the workflow's step logic and its two error kinds.
 - `internal/`: the remaining shared processing packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
@@ -135,7 +136,10 @@ It currently creates:
 |---|---|
 | DynamoDB table | single table, on-demand, TTL on `expiresAt` |
 | S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
-| `create-job`, `get-job` Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
+| Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
+| Upload queue and its dead letters | three attempts, then the message stops being redelivered |
+| S3 notification | filtered to `uploads/`, so derived artifacts do not start a workflow |
+| Step Functions workflow | Standard; `Validate` then `MarkDone`, with a catch routing to `MarkFailed` |
 | Log groups | one week of retention, set explicitly |
 
 **There is no API Gateway yet.** The handlers read their caller from a JWT
@@ -175,6 +179,7 @@ on code that does not ship.
 | `LOG_LEVEL` | `internal/logging` | `debug`, `info` (default), `warn`, or `error` |
 | `TABLE_NAME` | `internal/store` | the single DynamoDB table; required |
 | `DYNAMODB_ENDPOINT` | `internal/store` | overrides the endpoint, for DynamoDB Local |
+| `STATE_MACHINE_ARN` | `cmd/starter` | the workflow to launch; required |
 | `OCR_PROVIDER` | `internal/ocr` | `tesseract` (default) or `textract` |
 | `TEXTRACT_DAILY_PAGES` | `internal/quota` | paid pages per user per UTC day, 20 by default; `0` refuses every fallback |
 | `UPLOAD_BUCKET` | `internal/storage` | the private upload bucket; required |
