@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"docflow/internal/model"
 )
 
 // defaultTTL is how long a presigned upload stays valid when a caller does
@@ -23,17 +28,31 @@ var (
 	ErrInvalidLimit = errors.New("upload size limit must be positive")
 )
 
-// PostPresigner is the one S3 call this package makes. Keeping it an
-// interface means the handler tests never reach the network.
+// PostPresigner signs an upload. Keeping it an interface means the handler
+// tests never reach the network.
 type PostPresigner interface {
 	PresignPostObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.PresignPostOptions)) (*s3.PresignedPostRequest, error)
 }
 
-// S3 presigns uploads into one bucket.
+// API is the slice of the S3 client this package reads with.
+type API interface {
+	GetObject(ctx context.Context, in *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	PutObject(ctx context.Context, in *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+}
+
+// S3 presigns uploads into one bucket and reads objects back out of it.
 type S3 struct {
 	presigner PostPresigner
+	client    API
 	bucket    string
 	now       func() time.Time
+}
+
+// WithClient gives the storage a reader. NewS3FromEnv sets it; NewS3 takes
+// only a presigner, so a test that signs uploads needs nothing more.
+func WithClient(client API) S3Option {
+	return func(s *S3) { s.client = client }
 }
 
 // S3Option configures an S3.
@@ -73,7 +92,7 @@ func NewS3FromEnv(ctx context.Context, opts ...S3Option) (*S3, error) {
 			o.UsePathStyle = true
 		}
 	})
-	return NewS3(s3.NewPresignClient(client), bucket, opts...), nil
+	return NewS3(s3.NewPresignClient(client), bucket, append([]S3Option{WithClient(client)}, opts...)...), nil
 }
 
 var _ Storage = (*S3)(nil)
@@ -118,4 +137,71 @@ func (s *S3) PresignUpload(ctx context.Context, key, contentType string, maxByte
 		MaxBytes:  maxBytes,
 		ExpiresAt: s.now().UTC().Add(ttl),
 	}, nil
+}
+
+// ErrNotFound means the key holds no object.
+var ErrNotFound = errors.New("object not found")
+
+var _ Documents = (*S3)(nil)
+
+// Size returns an object's length.
+func (s *S3) Size(ctx context.Context, key string) (int64, error) {
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("head %s: %w", key, translateNotFound(err))
+	}
+	if out.ContentLength == nil {
+		return 0, fmt.Errorf("head %s: no content length", key)
+	}
+	return *out.ContentLength, nil
+}
+
+// ReadHeader returns an object's first n bytes, using a ranged read so the
+// rest never crosses the network.
+func (s *S3) ReadHeader(ctx context.Context, key string, n int64) ([]byte, error) {
+	if n <= 0 {
+		return nil, fmt.Errorf("read header of %s: %d bytes requested", key, n)
+	}
+	// HTTP ranges are inclusive on both ends.
+	return s.read(ctx, key, aws.String(fmt.Sprintf("bytes=0-%d", n-1)))
+}
+
+// Read returns a whole object.
+func (s *S3) Read(ctx context.Context, key string) ([]byte, error) {
+	return s.read(ctx, key, nil)
+}
+
+func (s *S3) read(ctx context.Context, key string, byteRange *string) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+		Range:  byteRange,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get %s: %w", key, translateNotFound(err))
+	}
+	defer out.Body.Close() //nolint:errcheck // nothing useful to do with a close failure on a read
+
+	// A ranged read is already bounded; a whole-object read is bounded by
+	// the upload policy, and this is the belt to that policy's braces.
+	body, err := io.ReadAll(io.LimitReader(out.Body, model.MaxUploadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", key, err)
+	}
+	return body, nil
+}
+
+// translateNotFound turns S3's two different missing-object errors into one
+// sentinel, so callers do not have to know which API they came from.
+func translateNotFound(err error) error {
+	if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
+		return ErrNotFound
+	}
+	if _, ok := errors.AsType[*types.NotFound](err); ok {
+		return ErrNotFound
+	}
+	return err
 }
