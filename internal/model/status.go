@@ -23,14 +23,30 @@ var (
 	ErrInvalidTransition = errors.New("job status transition not allowed")
 )
 
-// allowedTransitions maps each status to the statuses it may move to. Jobs only
-// move forward: PENDING -> PROCESSING -> DONE|FAILED. A job that never gets a
-// valid upload stays PENDING until its TTL removes it.
+// allowedTransitions maps each status to the statuses it may move to. Jobs
+// only move forward:
+//
+//	PENDING ---> PROCESSING ---> DONE
+//	   |               \-------> FAILED
+//	   \-----------------------> FAILED
+//
+// A job fails straight from PENDING when the starter rejects the upload
+// before any work begins, which saves a write that exists only to satisfy the
+// state machine. See docs/adr/0001-job-status-transitions.md.
+//
+// A job nobody ever uploads for stays PENDING until its TTL removes it;
+// nothing fails it.
 var allowedTransitions = map[JobStatus][]JobStatus{
-	StatusPending:    {StatusProcessing},
+	StatusPending:    {StatusProcessing, StatusFailed},
 	StatusProcessing: {StatusDone, StatusFailed},
 	StatusDone:       nil,
 	StatusFailed:     nil,
+}
+
+// FailableFrom lists the statuses a job may move to FAILED from. The store
+// builds its conditional write from this, so the rule lives in one place.
+func FailableFrom() []JobStatus {
+	return []JobStatus{StatusPending, StatusProcessing}
 }
 
 // Valid reports whether s is one of the known statuses.

@@ -184,19 +184,24 @@ func (s *Store) UpdateStatus(ctx context.Context, userID, jobID string, from, to
 	if err := from.ValidateTransition(to); err != nil {
 		return fmt.Errorf("update job %s: %w", jobID, err)
 	}
-	return s.conditionalStatusWrite(ctx, userID, jobID, from, to, "", now)
+	return s.conditionalStatusWrite(ctx, userID, jobID, []model.JobStatus{from}, to, "", now)
 }
 
-// FailJob moves a PROCESSING job to FAILED.
+// FailJob moves a job to FAILED from any status the model allows failing
+// from, which is PENDING or PROCESSING. Failing an already finished job is a
+// conflict, not a no-op.
 func (s *Store) FailJob(ctx context.Context, userID, jobID, reason string, now time.Time) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return fmt.Errorf("fail job %s: %w", jobID, model.ErrMissingReason)
 	}
-	return s.conditionalStatusWrite(ctx, userID, jobID, model.StatusProcessing, model.StatusFailed, reason, now)
+	return s.conditionalStatusWrite(ctx, userID, jobID, model.FailableFrom(), model.StatusFailed, reason, now)
 }
 
-func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string, from, to model.JobStatus, reason string, now time.Time) error {
+func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string, from []model.JobStatus, to model.JobStatus, reason string, now time.Time) error {
+	if len(from) == 0 {
+		return fmt.Errorf("update job %s to %s: no source status to condition on", jobID, to)
+	}
 	set := []string{"#status = :to", "#updatedAt = :updatedAt"}
 	names := map[string]string{
 		"#pk":        pkAttr,
@@ -205,8 +210,19 @@ func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string
 	}
 	values := map[string]types.AttributeValue{
 		":to":        &types.AttributeValueMemberS{Value: string(to)},
-		":from":      &types.AttributeValueMemberS{Value: string(from)},
 		":updatedAt": &types.AttributeValueMemberS{Value: formatTime(now)},
+	}
+	// One source status compares directly; several become an IN list, which
+	// is how FailJob accepts both PENDING and PROCESSING in one write.
+	placeholders := make([]string, 0, len(from))
+	for i, status := range from {
+		name := fmt.Sprintf(":from%d", i)
+		placeholders = append(placeholders, name)
+		values[name] = &types.AttributeValueMemberS{Value: string(status)}
+	}
+	statusCondition := "#status = " + placeholders[0]
+	if len(placeholders) > 1 {
+		statusCondition = "#status IN (" + strings.Join(placeholders, ", ") + ")"
 	}
 	if reason != "" {
 		set = append(set, "#failureReason = :failureReason")
@@ -221,7 +237,7 @@ func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string
 			skAttr: &types.AttributeValueMemberS{Value: jobSK(jobID)},
 		},
 		UpdateExpression:          aws.String("SET " + strings.Join(set, ", ")),
-		ConditionExpression:       aws.String("attribute_exists(#pk) AND #status = :from"),
+		ConditionExpression:       aws.String("attribute_exists(#pk) AND " + statusCondition),
 		ExpressionAttributeNames:  names,
 		ExpressionAttributeValues: values,
 		// Asking for the old item on a failed condition is what lets this

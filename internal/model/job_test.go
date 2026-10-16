@@ -212,7 +212,6 @@ func TestJobFail(t *testing.T) {
 
 		{name: "empty reason", from: StatusProcessing, reason: "", wantErr: ErrMissingReason},
 		{name: "blank reason", from: StatusProcessing, reason: "   ", wantErr: ErrMissingReason},
-		{name: "fail before processing", from: StatusPending, reason: "never uploaded", wantErr: ErrInvalidTransition},
 		{name: "fail twice", from: StatusFailed, reason: "again", wantErr: ErrInvalidTransition},
 		{name: "fail after done", from: StatusDone, reason: "too late", wantErr: ErrInvalidTransition},
 	}
