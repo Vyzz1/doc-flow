@@ -3,6 +3,7 @@ module docflow
 go 1.26.9
 
 require (
+	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.33.9
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.21.12

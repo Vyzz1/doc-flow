@@ -81,7 +81,7 @@ type Job struct {
 // that ULID generation stays with the handler that can also log it, and now so
 // that tests control time.
 func NewJob(userID, jobID string, docType DocType, now time.Time) (Job, error) {
-	if err := validateUserID(userID); err != nil {
+	if err := ValidateUserID(userID); err != nil {
 		return Job{}, err
 	}
 	if err := validateJobID(jobID); err != nil {
@@ -112,7 +112,7 @@ func UploadKey(userID, jobID string) string {
 // job and after reading one back, so a malformed item fails at the boundary
 // rather than deeper in the workflow.
 func (j Job) Validate() error {
-	if err := validateUserID(j.UserID); err != nil {
+	if err := ValidateUserID(j.UserID); err != nil {
 		return err
 	}
 	if err := validateJobID(j.JobID); err != nil {
@@ -183,7 +183,7 @@ type WorkflowInput struct {
 
 // Validate reports whether w carries everything a workflow state needs.
 func (w WorkflowInput) Validate() error {
-	if err := validateUserID(w.UserID); err != nil {
+	if err := ValidateUserID(w.UserID); err != nil {
 		return err
 	}
 	if err := validateJobID(w.JobID); err != nil {
@@ -198,9 +198,10 @@ func (w WorkflowInput) Validate() error {
 	return nil
 }
 
-// validateUserID rejects identifiers that are empty, oversized, or that carry
-// the separators used by the single-table key layout.
-func validateUserID(userID string) error {
+// ValidateUserID rejects identifiers that are empty, oversized, or that carry
+// the separators used by the single-table key layout. The API checks a token
+// subject with it before that subject becomes part of a key.
+func ValidateUserID(userID string) error {
 	switch {
 	case userID == "":
 		return fmt.Errorf("user id is empty: %w", ErrInvalidUserID)
