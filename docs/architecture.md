@@ -17,7 +17,7 @@ the decisions that departed from them.
 | Infrastructure for everything below | implemented, **never deployed** |
 | Upload queue, workflow starter, validation | implemented |
 | Preprocess, thumbnail, OCR, extract | packages exist, no workflow states yet |
-| HTTP API, authorizer | **not built**: the token issuer is undecided |
+| HTTP API, Cognito authorizer | implemented |
 | Dashboard | not started |
 
 Nothing has run on AWS. See [What is not verified](#what-is-not-verified).
@@ -30,10 +30,13 @@ What runs today. Dashed edges are failure paths.
 flowchart TD
     client(["Client"])
 
-    subgraph api["API — nothing routes to these yet"]
+    subgraph api["API"]
+        gateway["HTTP API<br/>JWT authorizer"]
         createJob["create-job"]
         getJob["get-job"]
     end
+
+    cognito[("Cognito<br/>user pool")]
 
     subgraph processing["Processing"]
         queue["SQS"]
@@ -50,7 +53,10 @@ flowchart TD
     table[("DynamoDB<br/>single table")]
     bucket[("S3<br/>uploads/")]
 
-    client -->|"POST /jobs"| createJob
+    client -->|"sign in"| cognito
+    cognito -->|"JWT"| client
+    client -->|"POST /jobs, bearer token"| gateway
+    gateway -->|"verified sub claim"| createJob
     createJob -->|"job PENDING"| table
     createJob -->|"presigned POST"| client
     client -->|"multipart POST"| bucket
@@ -63,12 +69,13 @@ flowchart TD
     validate -.->|"catch"| markFailed
     markDone -->|"DONE"| table
     markFailed -->|"FAILED"| table
-    client -->|"GET /jobs/id"| getJob
+    client -->|"GET /jobs/id, bearer token"| gateway
+    gateway --> getJob
     getJob --> table
 ```
 
-`create-job` and `get-job` have no route in front of them yet. The workflow
-ends after validation.
+The workflow ends after validation; the recognition steps below are written
+but not wired in.
 
 ### Where the rest goes
 
@@ -142,9 +149,16 @@ before it costs anything.
 `internal/api` holds the request handling; `cmd/create-job` and
 `cmd/get-job` build clients during initialization and start the runtime.
 
-The caller comes from a JWT authorizer's verified `sub` claim, never from
+The caller comes from the authorizer's verified `sub` claim, never from
 anything the client sends, and is checked against the same rules a stored
-job's owner is.
+job's owner is. Cognito signs those tokens; the authorizer pins both the
+issuer and the audience, so a token from another client of the same pool is
+refused. [ADR 0002](adr/0002-cognito-for-authentication.md) records why
+Cognito and why its cheapest plan.
+
+The API sets no default authorizer. A route that forgot one would then be
+open rather than silently protected, and a test asserts every route carries
+`AuthorizationType: JWT`.
 
 Ownership needs no permission check. A job lives under its owner's partition
 key, so another user's id does not find it, and a caller cannot learn whether
@@ -263,6 +277,8 @@ neither is a default:
 
 | Service | Free tier | Shape here |
 |---|---|---|
+| Cognito | 10,000 monthly active users | Lite plan, set explicitly |
+| API Gateway | 1M requests | HTTP API, about a third of a REST API's price |
 | DynamoDB | 25 GB | on-demand, items expire after 7 days |
 | S3 | 5 GB | uploads expire after 7 days |
 | Lambda | 1M requests | arm64, small memory, short timeouts |
@@ -318,6 +334,5 @@ of that is set up yet, and there is no `make test-int` target despite
 
 | Question | Blocks |
 |---|---|
-| Which issuer signs the JWTs | the HTTP API, and therefore any real use |
 | testcontainers-go or docker compose | integration tests against real servers |
 | Whether CI enforces a coverage floor | nothing, but a gap already slipped through once |

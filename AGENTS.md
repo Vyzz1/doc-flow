@@ -11,7 +11,8 @@ extracts fields, and reports job progress.
 Flow:
 
 ```
-Client -> API Gateway (HTTP API) -> Lambda create-job -> presigned S3 URL + job PENDING in DynamoDB
+Client -> API Gateway (HTTP API, Cognito JWT authorizer) -> Lambda create-job
+       -> presigned S3 URL + job PENDING in DynamoDB
 Client -> S3 (uploads/) -> S3 Event -> SQS -> Lambda starter -> Step Functions (Standard)
   Validate -> [Preprocess + Thumbnail] -> OCR (Tesseract; fallback Textract if low confidence)
            -> Extract fields -> Save results
@@ -36,6 +37,7 @@ Dashboard: static React app on S3 + CloudFront
 |---|---|
 | Lambda code | Go, `arm64`, runtime `provided.al2023` (OCR Lambda: container image) |
 | Infrastructure | AWS CDK in Go (`infra/`, its own module) |
+| Identity | Cognito user pool, Lite plan (see `docs/adr/0002-cognito-for-authentication.md`) |
 | Data | DynamoDB single-table design |
 | Orchestration | Step Functions Standard, SQS (+ DLQ) |
 | CI/CD | GitHub Actions (dev / prod environments) |
