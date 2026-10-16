@@ -1,0 +1,33 @@
+# Local stand-ins for the two services the data layer talks to.
+#
+# `make test-int` runs the integration tests against these. They are not
+# AWS: DynamoDB Local and MinIO each implement enough of the API to show
+# that conditional writes, ranged reads and presigned policies behave as
+# this code assumes, which is what unit tests against fakes cannot show.
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.2
+    # In-memory: a test run should start from nothing, and there is no
+    # state here worth keeping between runs.
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo ok >&3"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # S3Mock rather than MinIO: MinIO stopped publishing a community image
+  # that can be pulled without credentials, and this one is a tenth the
+  # size for what these tests need.
+  s3:
+    image: adobe/s3mock:5.2
+    environment:
+      # The tests create their own bucket rather than relying on a
+      # container setting, so a change to this image cannot silently leave
+      # them pointing at nothing.
+      retainFilesOnExit: "false"
+    ports:
+      - "9090:9090"

@@ -140,6 +140,35 @@ jobs:
           fi
         working-directory: infra
 
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            infra/go.sum
+
+      # DynamoDB Local and S3Mock, started by compose rather than as job
+      # services so the same command works here and on a laptop.
+      - name: Start the local services
+        run: docker compose up -d --wait
+
+      - name: Test
+        run: |
+          DYNAMODB_ENDPOINT=http://127.0.0.1:8000           S3_ENDPOINT=http://127.0.0.1:9090           AWS_REGION=ap-southeast-1           go test -count=1 -tags=integration ./internal/...
+
+      - name: Stop the local services
+        if: always()
+        run: docker compose down -v
+
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
@@ -169,7 +198,7 @@ jobs:
     name: Merge
     # Runs only when both jobs above succeed, which is what makes this safe
     # without branch protection.
-    needs: [go, infra, govulncheck]
+    needs: [go, infra, integration, govulncheck]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
