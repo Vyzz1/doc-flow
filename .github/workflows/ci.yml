@@ -40,6 +40,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            infra/go.sum
 
       # GOOS, GOARCH, and CGO_ENABLED are deliberately not set at the workflow
       # level: the `build` target exports them itself, and setting them here
@@ -49,8 +52,10 @@ jobs:
 
       # `make lint` runs the linters and then `golangci-lint fmt --diff`, which
       # exits non-zero when gofmt or goimports would rewrite a file.
+      # lint-go, not lint: the infra module is linted in its own job, which
+      # already has the CDK dependency tree.
       - name: Lint and check formatting
-        run: PATH="$(go env GOPATH)/bin:$PATH" make lint
+        run: PATH="$(go env GOPATH)/bin:$PATH" make lint-go
 
       # Runs natively on the amd64 runner. -race needs cgo, which is why the
       # cgo-free setting belongs to the build target rather than to the job.
@@ -78,6 +83,62 @@ jobs:
             git status --short
             exit 1
           fi
+
+  infra:
+    name: CDK lint, test, synth
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      GOLANGCI_LINT_VERSION: v2.12.2
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            infra/go.sum
+
+      # The CDK's Go API is a jsii binding: it drives the CDK's JavaScript in
+      # a Node subprocess, and the cdk CLI is a Node program too. Go alone is
+      # not enough to synthesize.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: Lint and check formatting
+        run: PATH="$(go env GOPATH)/bin:$PATH" make lint-infra
+
+      - name: Test
+        run: go test ./...
+        working-directory: infra
+
+      # The stack mounts bin/<command> as each Lambda's asset, so the Go
+      # binaries have to exist before the app can synthesize.
+      - name: Build the Lambda assets
+        run: make build
+
+      - name: Synth
+        run: npx cdk synth -q
+        working-directory: infra
+
+      - name: Check that go.mod is tidy and the tree is clean
+        run: |
+          go mod tidy
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Working tree is dirty after the infra checks:"
+            git status --short
+            exit 1
+          fi
+        working-directory: infra
 
   govulncheck:
     name: govulncheck
@@ -108,7 +169,7 @@ jobs:
     name: Merge
     # Runs only when both jobs above succeed, which is what makes this safe
     # without branch protection.
-    needs: [go, govulncheck]
+    needs: [go, infra, govulncheck]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

@@ -32,7 +32,9 @@ quota. See [AGENTS.md](AGENTS.md) for architecture, security, and cost constrain
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability
   scan, and the merge step.
 - `docs/adr/`: architecture decision records.
-- `infra/` and `web/` will be added when implementation begins.
+- `infra/`: the CDK app, a separate Go module holding the table, bucket, and
+  Lambdas.
+- `web/` will be added when implementation begins.
 
 The worker placeholder will be split into individual processing Lambda commands
 as those steps are implemented. `cmd/` holds executable entrypoints; `internal/`
@@ -49,10 +51,17 @@ it or set `GOTOOLCHAIN=auto` to let Go fetch it. Install the linter using its [o
 No external application dependencies are installed.
 
 ```sh
-make lint test
-make build
+make lint test       # both Go modules
+make build           # linux/arm64 bootstrap binaries
+make test-infra      # CDK assertion tests
+make synth           # synthesize the stack (builds the assets first)
 make fmt
 ```
+
+`infra/` is a separate module, so `./...` at the root never reaches it;
+`make lint` covers both, and `make test` deliberately does not. Synthesizing
+runs the CDK's JavaScript in a Node subprocess through jsii, which takes
+seconds rather than milliseconds, so those tests have their own target.
 
 `make lint` checks errors, static analysis, unused code, and formatting. CI runs
 the same targets, so a green `make lint test build` locally means a green build.
@@ -106,6 +115,55 @@ partition key, so another user's id simply does not find it, and a caller
 cannot learn whether someone else's job exists.
 
 A malformed id is rejected before any read, so a bad path costs no capacity.
+
+## Infrastructure
+
+`infra/` is a CDK app written in Go, in its own module so the CDK's large,
+build-time-only dependency tree stays out of the Lambda module's graph.
+
+**It still needs Node.** The Go API is a jsii binding: it drives the CDK's
+JavaScript in a Node subprocess, and the `cdk` CLI is itself a Node program.
+Writing the app in Go removes the npm dependencies from the repository, not
+the Node requirement.
+
+It currently creates:
+
+| Resource | Notes |
+|---|---|
+| DynamoDB table | single table, on-demand, TTL on `expiresAt` |
+| S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
+| `create-job`, `get-job` Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
+| Log groups | one week of retention, set explicitly |
+
+**There is no API Gateway yet.** The handlers read their caller from a JWT
+authorizer, and which issuer signs those tokens is still an open decision, so
+the HTTP API is the first job of the next phase. Until then the functions
+deploy but nothing routes to them.
+
+Two stages, chosen with `-c stage=`:
+
+```sh
+make build                          # the stack mounts bin/<command> as assets
+cd infra
+npx cdk synth                       # dev: DESTROY on teardown, debug logging
+npx cdk synth -c stage=prod         # prod: RETAIN, info logging, no auto-delete helper
+npx cdk synth -c uploadOrigins=https://app.example   # restrict the upload CORS
+```
+
+Nothing in the stack runs when idle. The table bills per request, Lambda bills
+per invocation, and the log groups expire, which is the one cost that
+otherwise accrues on its own.
+
+IAM is written out statement by statement rather than taken from the CDK's
+`Grant*` helpers, which hand over more verbs than either function uses:
+`create-job` gets `dynamodb:PutItem` and `s3:PutObject` under `uploads/*`,
+`get-job` gets `dynamodb:GetItem` and `dynamodb:Query`. A test asserts the
+production template contains no wildcard action or resource, and another
+asserts the stack creates nothing that bills while idle.
+
+`govulncheck` runs over the root module only. The CDK tree is build-time
+tooling that never reaches a deployed artifact, and scanning it would report
+on code that does not ship.
 
 ## Configuration
 

@@ -19,3 +19,4 @@ cdk.out/
 .idea/
 .DS_Store
 Thumbs.db
+*.exe
