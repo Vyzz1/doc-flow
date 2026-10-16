@@ -7,14 +7,17 @@ BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra
 
-.PHONY: help build lint lint-go lint-infra fmt test test-infra synth
+.PHONY: help build lint lint-go lint-infra fmt test test-int test-infra synth up down
 
 help:
 	@echo make build      - build Lambdas for linux/arm64 into bin/
 	@echo make lint       - check Go code and formatting, both modules
 	@echo make fmt        - format Go code and imports, both modules
 	@echo make test       - run unit tests
+	@echo make test-int   - run integration tests against the local services
 	@echo make test-infra - run CDK assertion tests
+	@echo make up         - start DynamoDB Local and S3Mock
+	@echo make down       - stop them and discard their data
 	@echo make synth      - synthesize the CDK app \(builds the assets first\)
 
 build: export GOOS := linux
@@ -48,6 +51,18 @@ test:
 
 # Separated from `test` because synthesizing runs the CDK's JavaScript in a
 # Node subprocess through jsii, which takes seconds rather than milliseconds.
+# Against the containers `make up` starts. The endpoints are passed in
+# rather than defaulted in code, so a test run can never reach a real
+# account by forgetting to set something.
+test-int: up
+	DYNAMODB_ENDPOINT=http://127.0.0.1:8000 	S3_ENDPOINT=http://127.0.0.1:9090 	AWS_REGION=ap-southeast-1 	$(GO) test -count=1 -tags=integration ./internal/...
+
+up:
+	docker compose up -d --wait
+
+down:
+	docker compose down -v
+
 test-infra:
 	cd $(INFRA) && $(GO) test ./...
 

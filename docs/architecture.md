@@ -312,27 +312,48 @@ Two stages, chosen with `-c stage=`:
 The account and region come from the ambient AWS configuration. No account
 id is committed.
 
+## What is verified, and how
+
+| Layer | Against | Shows |
+|---|---|---|
+| Unit tests | fakes | each package's logic, including its failure paths |
+| Integration tests | DynamoDB Local, S3Mock | conditional writes really are conditional, ranged reads return the range, items carry the TTL attribute |
+| CDK assertions | the synthesized template | the IAM statements, the resource shapes, the absence of anything always-on |
+
+The integration tests are the ones worth naming. A fake can report that a
+condition expression was sent; only a database can show that twelve workers
+racing to claim one job produce one winner, or that twenty callers racing
+for ten pages of quota spend ten and not eleven. Both are tested.
+
 ## What is not verified
 
-Everything above is checked by unit tests, `cdk synth`, and assertions
-against the synthesized template. **No part of it has run on AWS.** That
-leaves a real gap:
+**No part of this has run on AWS.** That leaves gaps no local test closes:
 
 - whether an S3 event actually reaches the queue
 - whether the IAM policies are *sufficient*, as opposed to being what the
   code says they are
 - whether an arm64 `provided.al2023` function bootstraps
 - whether Step Functions passes payloads in the shape the steps expect
-- whether the conditional writes behave as expected against a real table
 
-The first and second can only be answered by a deployment. The others can be
-answered locally, with DynamoDB Local, MinIO, and Step Functions Local; none
-of that is set up yet, and there is no `make test-int` target despite
-`AGENTS.md` mentioning one.
+Two more came out of writing the integration tests, and are worth stating
+because a passing suite could be mistaken for covering them:
+
+- **The upload size limit is not enforced in any test.** It lives in the
+  presigned POST's signed policy, and S3Mock does not evaluate POST
+  conditions: it accepted four kilobytes against a sixteen-byte policy. The
+  conditions themselves are asserted in a unit test; only S3 applies them.
+- **Response checksum validation is turned off against the stand-ins.**
+  S3Mock answers a ranged read with the whole object's checksum, and
+  DynamoDB Local returns none at all, so both would otherwise fail every
+  call. Production leaves validation on, and that it passes against the real
+  services is untested.
+
+Step Functions Local would answer the payload-shape question without a
+deployment. The rest need one.
 
 ## Open decisions
 
 | Question | Blocks |
 |---|---|
-| testcontainers-go or docker compose | integration tests against real servers |
 | Whether CI enforces a coverage floor | nothing, but a gap already slipped through once |
+| Whether to add Step Functions Local | the payload shapes between states, still unchecked |

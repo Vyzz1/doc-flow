@@ -60,10 +60,18 @@ No external application dependencies are installed.
 ```sh
 make lint test       # both Go modules
 make build           # linux/arm64 bootstrap binaries
+make test-int        # integration tests; starts the local services first
 make test-infra      # CDK assertion tests
 make synth           # synthesize the stack (builds the assets first)
+make up / make down  # DynamoDB Local and S3Mock
 make fmt
 ```
+
+`make test-int` needs Docker. It runs the tests behind the `integration`
+build tag against DynamoDB Local and S3Mock, which is where the conditional
+writes and the ranged reads are shown to work rather than merely to be
+sent. The endpoints are passed in rather than defaulted in code, so a run
+can never reach a real account by forgetting to set something.
 
 `infra/` is a separate module, so `./...` at the root never reaches it;
 `make lint` covers both, and `make test` deliberately does not. Synthesizing
