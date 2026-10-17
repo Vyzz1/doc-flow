@@ -18,8 +18,9 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 
 ## Layout
 
-- `cmd/`: the Lambdas. `create-job` and `get-job` serve the API;
-  `starter`, `validate`, and `finish` make up the processing workflow.
+- `cmd/`: the Lambdas. `create-job` and `get-job` serve the API; `starter`,
+  `validate`, `recognize`, `extract`, and `finish` make up the processing
+  workflow.
 - `internal/model`: domain types: `Job` and its status state machine,
   `StepResult`, `DocumentResult`, and the `WorkflowInput` payload passed between
   Step Functions states.
@@ -32,6 +33,7 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 - `internal/ocr`: the `Client` interface, the Tesseract subprocess, and a fake.
 - `internal/quota`: the per-user daily allowance for paid OCR.
 - `internal/preprocess`: normalizes pages for OCR and makes thumbnails.
+- `internal/extract`: turns recognized text into the document's fields.
 - `internal/pipeline`: the workflow's step logic and its two error kinds.
 - `internal/`: the remaining shared processing packages.
 - `.github/workflows/ci.yml`: lint, test, linux/arm64 build, vulnerability

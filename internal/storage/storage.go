@@ -54,3 +54,11 @@ type Documents interface {
 	// fits: the upload policy caps one at model.MaxUploadBytes.
 	Read(ctx context.Context, key string) ([]byte, error)
 }
+
+// Artifacts writes what the pipeline derives from an upload. It is separate
+// from Documents because only one step writes, and its role says so.
+type Artifacts interface {
+	// Write stores body at key. The content type is recorded on the object
+	// so a browser fetching a thumbnail renders it.
+	Write(ctx context.Context, key, contentType string, body []byte) error
+}

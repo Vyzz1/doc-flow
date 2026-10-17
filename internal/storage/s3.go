@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -204,4 +205,25 @@ func translateNotFound(err error) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+var _ Artifacts = (*S3)(nil)
+
+// Write stores a derived artifact.
+func (s *S3) Write(ctx context.Context, key, contentType string, body []byte) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("write artifact: %w", ErrEmptyKey)
+	}
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      &s.bucket,
+		Key:         &key,
+		Body:        bytes.NewReader(body),
+		ContentType: &contentType,
+		// The object's length is known, so send it rather than letting the
+		// SDK buffer to discover it.
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		return fmt.Errorf("write %s: %w", key, err)
+	}
+	return nil
 }

@@ -296,3 +296,29 @@ func TestUploadKey(t *testing.T) {
 		t.Errorf("UploadKey() = %q, want %q", got, want)
 	}
 }
+
+func TestDerivedKey(t *testing.T) {
+	// Derived artifacts must not share the upload prefix: that prefix is
+	// what starts a workflow, so a rendition written beside the original
+	// would make the pipeline react to its own output.
+	for _, name := range []string{ArtifactPage, ArtifactThumbnail, ArtifactText} {
+		key := DerivedKey("user-1", testJobID, name)
+		want := "derived/user-1/" + testJobID + "/" + name
+		if key != want {
+			t.Errorf("DerivedKey(%q) = %q, want %q", name, key, want)
+		}
+		if strings.HasPrefix(key, "uploads/") {
+			t.Errorf("DerivedKey(%q) = %q, which the starter would react to", name, key)
+		}
+	}
+}
+
+func TestArtifactNamesAreDistinct(t *testing.T) {
+	names := map[string]bool{}
+	for _, name := range []string{ArtifactPage, ArtifactThumbnail, ArtifactText} {
+		if names[name] {
+			t.Errorf("artifact name %q is used twice, so one would overwrite the other", name)
+		}
+		names[name] = true
+	}
+}

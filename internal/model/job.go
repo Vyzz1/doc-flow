@@ -108,6 +108,23 @@ func UploadKey(userID, jobID string) string {
 	return "uploads/" + userID + "/" + jobID
 }
 
+// Names of the artifacts the pipeline derives from an upload.
+const (
+	ArtifactPage      = "page.png"
+	ArtifactThumbnail = "thumbnail.jpg"
+	ArtifactText      = "text.txt"
+)
+
+// DerivedKey returns the S3 key for one artifact derived from a job's
+// upload.
+//
+// Derived artifacts live under their own prefix. The upload prefix is what
+// starts a workflow, so writing a rendition beside the original would make
+// the pipeline react to its own output.
+func DerivedKey(userID, jobID, name string) string {
+	return "derived/" + userID + "/" + jobID + "/" + name
+}
+
 // Validate reports whether j is internally consistent. Use it before writing a
 // job and after reading one back, so a malformed item fails at the boundary
 // rather than deeper in the workflow.

@@ -222,3 +222,78 @@ func (f *brokenBodyAPI) GetObject(context.Context, *s3.GetObjectInput, ...func(*
 type failingReader struct{}
 
 func (*failingReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+func TestWrite(t *testing.T) {
+	f := &writeAPI{}
+	s := NewS3(&fakePresigner{}, testBucket, WithClient(f))
+
+	body := []byte("page bytes")
+	if err := s.Write(context.Background(), "derived/u/j/page.png", "image/png", body); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if f.put == nil {
+		t.Fatal("Write() sent no PutObject")
+	}
+	if *f.put.Key != "derived/u/j/page.png" || *f.put.Bucket != testBucket {
+		t.Errorf("wrote to %s/%s", *f.put.Bucket, *f.put.Key)
+	}
+	// The content type is recorded so a browser fetching a thumbnail
+	// renders it rather than downloading it.
+	if f.put.ContentType == nil || *f.put.ContentType != "image/png" {
+		t.Errorf("ContentType = %v, want image/png", f.put.ContentType)
+	}
+	// The length is known, so it is sent rather than letting the SDK buffer
+	// the body to discover it.
+	if f.put.ContentLength == nil || *f.put.ContentLength != int64(len(body)) {
+		t.Errorf("ContentLength = %v, want %d", f.put.ContentLength, len(body))
+	}
+	if string(f.body) != string(body) {
+		t.Errorf("stored %q, want %q", f.body, body)
+	}
+}
+
+func TestWriteRejectsAnEmptyKey(t *testing.T) {
+	for _, key := range []string{"", "   "} {
+		f := &writeAPI{}
+		s := NewS3(&fakePresigner{}, testBucket, WithClient(f))
+
+		if err := s.Write(context.Background(), key, "image/png", []byte("x")); !errors.Is(err, ErrEmptyKey) {
+			t.Errorf("Write(%q) error = %v, want ErrEmptyKey", key, err)
+		}
+		if f.put != nil {
+			t.Errorf("Write(%q) called S3 anyway", key)
+		}
+	}
+}
+
+func TestWriteWrapsFailures(t *testing.T) {
+	sentinel := errors.New("access denied")
+	f := &writeAPI{err: sentinel}
+	s := NewS3(&fakePresigner{}, testBucket, WithClient(f))
+
+	if err := s.Write(context.Background(), "derived/u/j/page.png", "image/png", []byte("x")); !errors.Is(err, sentinel) {
+		t.Errorf("Write() error = %v, want it to wrap %v", err, sentinel)
+	}
+}
+
+// writeAPI captures a PutObject and its body.
+type writeAPI struct {
+	fakeAPI
+
+	put  *s3.PutObjectInput
+	body []byte
+	err  error
+}
+
+func (w *writeAPI) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	w.put = in
+	if w.err != nil {
+		return nil, w.err
+	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	w.body = body
+	return &s3.PutObjectOutput{}, nil
+}

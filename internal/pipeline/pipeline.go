@@ -31,6 +31,17 @@ type State struct {
 	// SizeBytes is the stored object's real length.
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
 
+	// Keys of what the recognition step derived. Keys, not contents: the
+	// payload stays small enough that Step Functions never has to spill it.
+	PageKey      string `json:"pageKey,omitempty"`
+	ThumbnailKey string `json:"thumbnailKey,omitempty"`
+	TextKey      string `json:"textKey,omitempty"`
+
+	// What the engine reported about the text behind TextKey.
+	Confidence float64 `json:"confidence,omitempty"`
+	Pages      int     `json:"pages,omitempty"`
+	Provider   string  `json:"provider,omitempty"`
+
 	// Failed and Reason are set by the failure path, so the finish step can
 	// record why without a second payload shape.
 	Failed bool   `json:"failed,omitempty"`

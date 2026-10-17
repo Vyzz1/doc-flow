@@ -1,13 +1,22 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 
 	"docflow/internal/model"
+	"docflow/internal/ocr"
 	"docflow/internal/storage"
 	"docflow/internal/store"
 )
@@ -24,8 +33,9 @@ func testUploadKey() string { return model.UploadKey(testUser, testJobID) }
 
 // fakeStore is a JobStore whose every method can be told what to return.
 type fakeStore struct {
-	job   model.Job
-	steps []model.StepResult
+	job    model.Job
+	steps  []model.StepResult
+	result model.DocumentResult
 
 	statusCalls []statusCall
 	failCalls   []failCall
@@ -92,8 +102,12 @@ func (f *fakeStore) ListStepResults(context.Context, string) ([]model.StepResult
 	return f.steps, f.failures["ListStepResults"]
 }
 
-func (f *fakeStore) PutResult(context.Context, model.DocumentResult) error {
-	return f.failures["PutResult"]
+func (f *fakeStore) PutResult(_ context.Context, result model.DocumentResult) error {
+	if err := f.failures["PutResult"]; err != nil {
+		return err
+	}
+	f.result = result
+	return nil
 }
 
 func (f *fakeStore) GetResult(context.Context, string) (model.DocumentResult, error) {
@@ -176,3 +190,94 @@ var _ Executions = (*failingExecutions)(nil)
 
 // errTransient stands in for a throttled dependency.
 var errTransient = errors.New("throttled")
+
+// fakeArtifacts records what the recognition step stored.
+type fakeArtifacts struct {
+	written map[string][]byte
+	types   map[string]string
+	err     error
+	failOn  string
+}
+
+func newFakeArtifacts() *fakeArtifacts {
+	return &fakeArtifacts{written: map[string][]byte{}, types: map[string]string{}}
+}
+
+func (f *fakeArtifacts) Write(_ context.Context, key, contentType string, body []byte) error {
+	if f.err != nil && (f.failOn == "" || strings.HasSuffix(key, f.failOn)) {
+		return f.err
+	}
+	f.written[key] = body
+	f.types[key] = contentType
+	return nil
+}
+
+var _ storage.Artifacts = (*fakeArtifacts)(nil)
+
+// fakeRasterizer writes one PNG per page it is told to produce.
+type fakeRasterizer struct {
+	pages int
+	err   error
+
+	calls int
+}
+
+func (f *fakeRasterizer) Rasterize(_ context.Context, _, dir string) ([]string, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	var paths []string
+	for i := 1; i <= f.pages; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("page-%d.png", i))
+		if err := os.WriteFile(path, pngBytes(200, 260), 0o600); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+var _ Rasterizer = (*fakeRasterizer)(nil)
+
+// pngBytes builds a small PNG the preprocess package can decode.
+func pngBytes(width, height int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := range height {
+		for x := range width {
+			shade := uint8(240)
+			if y > height/3 && y < 2*height/3 {
+				shade = 16
+			}
+			img.Set(x, y, color.RGBA{R: shade, G: shade, B: shade, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// pagedOCR returns a different result per page, so a test can tell whether
+// every page was read.
+type pagedOCR struct {
+	results []ocr.Result
+	errs    []error
+
+	calls []ocr.Document
+}
+
+func (p *pagedOCR) Recognize(_ context.Context, doc ocr.Document) (ocr.Result, error) {
+	index := len(p.calls)
+	p.calls = append(p.calls, doc)
+	if index < len(p.errs) && p.errs[index] != nil {
+		return ocr.Result{}, p.errs[index]
+	}
+	if index < len(p.results) {
+		return p.results[index], nil
+	}
+	return ocr.Result{Text: "page", Confidence: 0.9, Pages: 1, Provider: ocr.ProviderTesseract}, nil
+}
+
+var _ ocr.Client = (*pagedOCR)(nil)
