@@ -23,9 +23,11 @@ const (
 //
 // It is deliberately short. Step Functions Standard bills per state
 // transition and the free tier allows four thousand a month, so every state
-// has to earn its place. Today that is validate, then finish, with one catch
-// routing a failure to the same finish function.
-func newWorkflow(scope constructs.Construct, validate, finish awslambda.Function, removalPolicy awscdk.RemovalPolicy) awsstepfunctions.StateMachine {
+// has to earn its place: validate, recognize, extract, then finish, with one
+// catch per working state routing a failure to the same finish function.
+// docs/adr/0003-recognition-is-one-state.md explains why rendering, the
+// thumbnail and the OCR are one state rather than three.
+func newWorkflow(scope constructs.Construct, validate, recognize, extract, finish awslambda.Function, removalPolicy awscdk.RemovalPolicy) awsstepfunctions.StateMachine {
 	markDone := awsstepfunctionstasks.NewLambdaInvoke(scope, jsii.String("MarkDoneStep"), &awsstepfunctionstasks.LambdaInvokeProps{
 		StateName:      jsii.String("MarkDone"),
 		LambdaFunction: finish,
@@ -69,14 +71,43 @@ func newWorkflow(scope constructs.Construct, validate, finish awslambda.Function
 		RetryOnServiceExceptions: jsii.Bool(true),
 	})
 	retryTransient(validateTask)
-	validateTask.AddCatch(markFailed, &awsstepfunctions.CatchProps{
-		// Everything, including a permanent failure, which is caught rather
-		// than retried: the retry rule above names only the transient one.
-		Errors: jsii.Strings("States.ALL"),
-		// Keep the input, and put the error beside it, so MarkFailed still
-		// knows which job it is finishing.
-		ResultPath: jsii.String("$.error"),
+	recognizeTask := awsstepfunctionstasks.NewLambdaInvoke(scope, jsii.String("RecognizeStep"), &awsstepfunctionstasks.LambdaInvokeProps{
+		StateName:                jsii.String("Recognize"),
+		LambdaFunction:           recognize,
+		Payload:                  awsstepfunctions.TaskInput_FromJsonPathAt(jsii.String("$")),
+		OutputPath:               jsii.String("$.Payload"),
+		RetryOnServiceExceptions: jsii.Bool(true),
 	})
+	retryTransient(recognizeTask)
+
+	extractTask := awsstepfunctionstasks.NewLambdaInvoke(scope, jsii.String("ExtractStep"), &awsstepfunctionstasks.LambdaInvokeProps{
+		StateName:                jsii.String("Extract"),
+		LambdaFunction:           extract,
+		Payload:                  awsstepfunctions.TaskInput_FromJsonPathAt(jsii.String("$")),
+		OutputPath:               jsii.String("$.Payload"),
+		RetryOnServiceExceptions: jsii.Bool(true),
+	})
+	retryTransient(extractTask)
+
+	// Every state that can fail routes a failure to the same place,
+	// MarkDone included. Without a catch of its own, a state's failure ends
+	// the execution with the job still PROCESSING, and nothing would ever
+	// move it: it would sit there until its TTL removed it.
+	//
+	// MarkFailed has no catch. If marking a job failed itself fails, there
+	// is nothing further the workflow can do, and the failed execution is
+	// what says so.
+	for _, task := range []awsstepfunctionstasks.LambdaInvoke{validateTask, recognizeTask, extractTask, markDone} {
+		task.AddCatch(markFailed, &awsstepfunctions.CatchProps{
+			// Everything, including a permanent failure, which is caught
+			// rather than retried: the retry rule above names only the
+			// transient one.
+			Errors: jsii.Strings("States.ALL"),
+			// Keep the input, and put the error beside it, so MarkFailed
+			// still knows which job it is finishing.
+			ResultPath: jsii.String("$.error"),
+		})
+	}
 
 	logs := awslogs.NewLogGroup(scope, jsii.String("WorkflowLogs"), &awslogs.LogGroupProps{
 		Retention:     awslogs.RetentionDays_ONE_WEEK,
@@ -87,8 +118,10 @@ func newWorkflow(scope constructs.Construct, validate, finish awslambda.Function
 		// Standard, not Express: executions are long and rare, and Express
 		// bills for duration whether or not anything is happening.
 		StateMachineType: awsstepfunctions.StateMachineType_STANDARD,
-		DefinitionBody:   awsstepfunctions.DefinitionBody_FromChainable(validateTask.Next(markDone)),
-		Timeout:          awscdk.Duration_Minutes(jsii.Number(15)),
+		DefinitionBody: awsstepfunctions.DefinitionBody_FromChainable(
+			validateTask.Next(recognizeTask).Next(extractTask).Next(markDone),
+		),
+		Timeout: awscdk.Duration_Minutes(jsii.Number(15)),
 		Logs: &awsstepfunctions.LogOptions{
 			Destination: logs,
 			Level:       awsstepfunctions.LogLevel_ERROR,

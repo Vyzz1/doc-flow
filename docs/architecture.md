@@ -16,7 +16,7 @@ the decisions that departed from them.
 | Presigned uploads, the two API handlers | implemented |
 | Infrastructure for everything below | implemented, **never deployed** |
 | Upload queue, workflow starter, validation | implemented |
-| Preprocess, thumbnail, OCR, extract | packages exist, no workflow states yet |
+| Recognition and field extraction | implemented |
 | HTTP API, Cognito authorizer | implemented |
 | Dashboard | not started |
 
@@ -45,6 +45,8 @@ flowchart TD
 
         subgraph workflow["Step Functions"]
             validate["Validate"]
+            recognize["Recognize<br/>container image"]
+            extractStep["Extract"]
             markDone["MarkDone"]
             markFailed["MarkFailed"]
         end
@@ -65,8 +67,13 @@ flowchart TD
     queue -.->|"after 3 failures"| dlq
     starter -->|"PENDING to PROCESSING"| table
     starter -->|"execution named after the job"| validate
-    validate --> markDone
+    validate --> recognize
+    recognize --> extractStep
+    extractStep --> markDone
     validate -.->|"catch"| markFailed
+    recognize -.->|"catch"| markFailed
+    extractStep -.->|"catch"| markFailed
+    markDone -.->|"catch"| markFailed
     markDone -->|"DONE"| table
     markFailed -->|"FAILED"| table
     client -->|"GET /jobs/id, bearer token"| gateway
@@ -74,31 +81,21 @@ flowchart TD
     getJob --> table
 ```
 
-The workflow ends after validation; the recognition steps below are written
-but not wired in.
+Every state that can fail routes its failure to `MarkFailed`, `MarkDone`
+included: without a catch, a failure ends the execution with the job still
+`PROCESSING` and nothing would ever move it.
 
-### Where the rest goes
+### Why recognition is one state
 
-The recognition packages are written and tested but have no states. This is
-the shape they slot into, not code that exists:
+Tesseract cannot open a PDF, and poppler's `pdftoppm` lives only in the
+recognition step's container image. Separate Preprocess and Thumbnail states
+would mean PDFs taking a different path from images, with nothing to produce
+a PDF's thumbnail. Doing the work together also reads the upload once and
+decodes it once instead of three times.
 
-```mermaid
-flowchart LR
-    validate["Validate"] --> preprocess["Preprocess"]
-    validate --> thumbnail["Thumbnail"]
-    preprocess --> ocr["OCR"]
-    thumbnail --> ocr
-    ocr --> extract["Extract"]
-    extract --> save["Save"]
-    save --> markDone["MarkDone"]
-
-    ocr -.->|"low confidence,<br/>within the daily quota"| textract["Textract"]
-    textract --> extract
-```
-
-Preprocess and Thumbnail run in parallel. Every state is one billed
-transition per job, which is what keeps the chain short; see
-[Cost](#cost).
+Four states rather than seven is roughly 800 jobs a month against the free
+tier's transition budget rather than 500.
+[ADR 0003](adr/0003-recognition-is-one-state.md) has the detail.
 
 ## Components
 
@@ -172,11 +169,23 @@ file contents.
 
 - **starter** turns an upload event into a running execution.
 - **validate** recognizes the document from its leading bytes.
+- **recognize** renders the document, stores the page and the thumbnail, and
+  reads the text. It is the one function that ships as a container image,
+  because it needs Tesseract and poppler.
+- **extract** pulls the document's fields out of the text and stores the
+  result.
 - **finish** records the terminal status, on both the success and the catch
   path.
 
-The recognition packages — `internal/preprocess`, `internal/ocr`,
-`internal/extract` — exist in varying states and have no workflow states yet.
+Artifacts are written under `derived/`, never `uploads/`. The upload prefix
+is what starts a workflow, so a rendition written beside the original would
+make the pipeline react to its own output.
+
+`internal/extract` is label-driven and deterministic. A document whose
+labels are misread yields fewer fields rather than wrong ones, because a
+wrong total on an invoice is worse than no total. Amounts keep their digits
+and lose their separators, since which separator meant what is not decidable
+from the text, and dates are kept as the document wrote them.
 
 ## The job lifecycle
 
@@ -295,9 +304,9 @@ A test asserts the stack creates no NAT gateway, VPC, RDS instance,
 OpenSearch domain, ElastiCache cluster, or ECS service, so the constraint is
 checked rather than remembered.
 
-The one recurring cost still to come is ECR, when the OCR function ships as a
-container image carrying Tesseract and poppler: roughly 400 MB against a
-500 MB free tier that lasts twelve months.
+ECR is the one recurring cost. The recognition image carries Tesseract and
+poppler and measures **81 MB**, against a 500 MB free tier that lasts twelve
+months.
 
 ## Environments
 
@@ -333,7 +342,9 @@ for ten pages of quota spend ten and not eleven. Both are tested.
 - whether the IAM policies are *sufficient*, as opposed to being what the
   code says they are
 - whether an arm64 `provided.al2023` function bootstraps
-- whether Step Functions passes payloads in the shape the steps expect
+- whether Step Functions passes payloads in the shape the steps expect,
+  which is now five states' worth of `OutputPath` and `ResultPath`
+  expressions rather than two
 
 Two more came out of writing the integration tests, and are worth stating
 because a passing suite could be mistaken for covering them:
@@ -348,12 +359,16 @@ because a passing suite could be mistaken for covering them:
   call. Production leaves validation on, and that it passes against the real
   services is untested.
 
-Step Functions Local would answer the payload-shape question without a
-deployment. The rest need one.
+All of these need a deployment.
 
 ## Open decisions
 
 | Question | Blocks |
 |---|---|
-| Whether CI enforces a coverage floor | nothing, but a gap already slipped through once |
-| Whether to add Step Functions Local | the payload shapes between states, still unchecked |
+| Whether CI enforces a coverage floor | nothing, but two gaps have slipped through now |
+
+Step Functions Local was considered for the payload-shape question and
+turned down: AWS marks it unsupported, with no feature parity, and building
+a suite on it would buy confidence it cannot justify. The shapes stay
+unverified until a deployment, or until the TestState API, which also needs
+an account.

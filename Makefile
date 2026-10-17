@@ -7,7 +7,7 @@ BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra
 
-.PHONY: help build lint lint-go lint-infra fmt test test-int test-infra synth up down
+.PHONY: help build image-context lint lint-go lint-infra fmt test test-int test-infra synth up down
 
 help:
 	@echo make build      - build Lambdas for linux/arm64 into bin/
@@ -66,7 +66,16 @@ down:
 test-infra:
 	cd $(INFRA) && $(GO) test ./...
 
-# The stack mounts bin/<command> as each Lambda's asset, so the binaries have
-# to exist before the app can synthesize.
-synth: build
+# The recognize function ships as a container image. Its build context is
+# build/ocr, which holds the Dockerfile and needs the compiled binary beside
+# it; copying rather than pointing the context at bin/ keeps what Docker
+# receives down to two files.
+image-context: build
+	cp bin/recognize/bootstrap $(INFRA)/../build/ocr/bootstrap
+
+# The stack mounts bin/<command> as each Lambda's asset and build/ocr as the
+# container image's context, so both have to exist before the app can
+# synthesize. Synthesizing a Docker asset also builds the image, which needs
+# Docker running.
+synth: build image-context
 	cd $(INFRA) && npx cdk synth -q

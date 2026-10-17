@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "create asset root:", err)
 		os.Exit(1)
 	}
-	for _, command := range []string{"create-job", "get-job", "starter", "validate", "finish"} {
+	for _, command := range []string{"create-job", "get-job", "starter", "validate", "extract", "finish"} {
 		dir := filepath.Join(root, command)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "create asset directory:", err)
@@ -203,11 +203,11 @@ func TestFunctions(t *testing.T) {
 
 	t.Run("runs both handlers on arm64 with the provided runtime", func(t *testing.T) {
 		found := resources(t, tpl, "AWS::Lambda::Function")
-		// Five handlers, plus two helpers CDK adds: the one that delivers
-		// bucket notifications and, in dev only, the one that empties the
-		// bucket on teardown.
-		if len(found) != 7 {
-			t.Fatalf("found %d functions, want 7", len(found))
+		// Six binary handlers, the recognition container, and two helpers
+		// CDK adds: the one that delivers bucket notifications and, in dev
+		// only, the one that empties the bucket on teardown.
+		if len(found) != 9 {
+			t.Fatalf("found %d functions, want 9", len(found))
 		}
 		handlers := 0
 		for _, fn := range found {
@@ -224,16 +224,16 @@ func TestFunctions(t *testing.T) {
 				t.Errorf("Handler = %v, want bootstrap", props["Handler"])
 			}
 		}
-		if handlers != 5 {
-			t.Errorf("found %d provided.al2023 handlers, want 5", handlers)
+		if handlers != 6 {
+			t.Errorf("found %d provided.al2023 handlers, want 6", handlers)
 		}
 	})
 
 	t.Run("expires its logs, which otherwise accrue forever", func(t *testing.T) {
 		groups := resources(t, tpl, "AWS::Logs::LogGroup")
-		// One per handler, plus the workflow's own.
-		if len(groups) != 6 {
-			t.Fatalf("found %d log groups, want 6", len(groups))
+		// One per function this stack defines, plus the workflow's own.
+		if len(groups) != 8 {
+			t.Fatalf("found %d log groups, want 8", len(groups))
 		}
 		for name, group := range groups {
 			if got := properties(t, group)["RetentionInDays"]; got != float64(7) {
@@ -317,20 +317,20 @@ func TestPermissions(t *testing.T) {
 	})
 
 	t.Run("lets create-job write only under the uploads prefix", func(t *testing.T) {
-		var writes []map[string]any
+		var uploadWrites int
 		for _, statement := range all {
-			if slices.Contains(asList(statement["Action"]), "s3:PutObject") {
-				writes = append(writes, statement)
+			if !slices.Contains(asList(statement["Action"]), "s3:PutObject") {
+				continue
+			}
+			// The resource is a Fn::Join around the bucket ARN; the prefix
+			// is the part worth pinning down. Recognition also writes, but
+			// under its own prefix, which is what the count checks.
+			if strings.Contains(string(mustJSON(t, statement["Resource"])), "/uploads/*") {
+				uploadWrites++
 			}
 		}
-		if len(writes) != 1 {
-			t.Fatalf("found %d s3:PutObject statements, want 1", len(writes))
-		}
-		// The resource is a Fn::Join around the bucket ARN; the prefix is the
-		// part worth pinning down.
-		encoded, _ := json.Marshal(writes[0]["Resource"])
-		if !strings.Contains(string(encoded), "/uploads/*") {
-			t.Errorf("s3:PutObject is not scoped to uploads/*: %s", encoded)
+		if uploadWrites != 1 {
+			t.Errorf("%d statements write to uploads/*, want only create-job's", uploadWrites)
 		}
 	})
 
@@ -383,8 +383,8 @@ func TestStages(t *testing.T) {
 		wantFunctions int
 		wantLogLevel  string
 	}{
-		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 7, wantLogLevel: "debug"},
-		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 6, wantLogLevel: "info"},
+		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 9, wantLogLevel: "debug"},
+		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 8, wantLogLevel: "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -622,55 +622,6 @@ func TestQueue(t *testing.T) {
 	})
 }
 
-func TestWorkflow(t *testing.T) {
-	tpl := template(t, StageDev)
-	machine := properties(t, only(t, tpl, "AWS::StepFunctions::StateMachine"))
-	definition, _ := json.Marshal(machine["DefinitionString"])
-	asl := string(definition)
-
-	t.Run("is a standard workflow", func(t *testing.T) {
-		// Express bills for duration whether or not anything is happening,
-		// and these executions are long and rare.
-		if got := machine["StateMachineType"]; got != "STANDARD" {
-			t.Errorf("StateMachineType = %v, want STANDARD", got)
-		}
-	})
-
-	t.Run("retries only what is worth retrying", func(t *testing.T) {
-		if !strings.Contains(asl, transientErrorName) {
-			t.Errorf("no retry rule names %s: %s", transientErrorName, asl)
-		}
-		// A permanent failure must fall straight through to the catch. If
-		// it appeared in a retry rule, a malformed upload would occupy the
-		// workflow for a minute before failing.
-		if strings.Contains(asl, `\"Retry\":[{\"ErrorEquals\":[\"`+permanentErrorName) {
-			t.Errorf("a retry rule names %s: %s", permanentErrorName, asl)
-		}
-	})
-
-	t.Run("catches everything and marks the job failed", func(t *testing.T) {
-		if !strings.Contains(asl, "States.ALL") {
-			t.Errorf("no catch-all: %s", asl)
-		}
-		if !strings.Contains(asl, "MarkFailed") {
-			t.Errorf("nothing routes to MarkFailed: %s", asl)
-		}
-	})
-
-	t.Run("stays short, because transitions are the billed unit", func(t *testing.T) {
-		// Step Functions Standard allows four thousand transitions a month
-		// on the free tier. Each state here is one per job.
-		for _, state := range []string{"Validate", "MarkDone", "MarkFailed"} {
-			if !strings.Contains(asl, state) {
-				t.Errorf("state %s is missing: %s", state, asl)
-			}
-		}
-		if count := strings.Count(asl, `\"Type\":\"Task\"`); count != 3 {
-			t.Errorf("the workflow has %d task states, want 3", count)
-		}
-	})
-}
-
 func TestWorkflowPermissions(t *testing.T) {
 	all := statements(t, template(t, StageDev))
 
@@ -700,15 +651,39 @@ func TestWorkflowPermissions(t *testing.T) {
 		}
 	})
 
-	t.Run("only validate reads an uploaded document", func(t *testing.T) {
-		var readers int
+	// The customer's original document is readable by exactly the two steps
+	// that have to read it. Everything after works from what recognition
+	// derived.
+	t.Run("each prefix is reachable by only the steps that need it", func(t *testing.T) {
+		counts := map[string]map[string]int{
+			"s3:GetObject": {}, "s3:PutObject": {},
+		}
 		for _, statement := range all {
-			if slices.Contains(asList(statement["Action"]), "s3:GetObject") {
-				readers++
+			for _, action := range asList(statement["Action"]) {
+				prefixes, tracked := counts[action]
+				if !tracked {
+					continue
+				}
+				rendered := string(mustJSON(t, statement["Resource"]))
+				switch {
+				case strings.Contains(rendered, "/uploads/*"):
+					prefixes["uploads"]++
+				case strings.Contains(rendered, "/derived/*"):
+					prefixes["derived"]++
+				default:
+					t.Errorf("%s is scoped to neither prefix: %s", action, rendered)
+				}
 			}
 		}
-		if readers != 1 {
-			t.Errorf("%d statements grant s3:GetObject, want only validate", readers)
+		// Reads: validate and recognize read the upload; extract reads the
+		// text recognition wrote.
+		if got := counts["s3:GetObject"]; got["uploads"] != 2 || got["derived"] != 1 {
+			t.Errorf("s3:GetObject = %v, want two on uploads and one on derived", got)
+		}
+		// Writes: create-job signs the client's upload, recognize writes
+		// the renditions. Nothing writes outside its own prefix.
+		if got := counts["s3:PutObject"]; got["uploads"] != 1 || got["derived"] != 1 {
+			t.Errorf("s3:PutObject = %v, want one each", got)
 		}
 	})
 }

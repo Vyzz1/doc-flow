@@ -20,3 +20,7 @@ cdk.out/
 .DS_Store
 Thumbs.db
 *.exe
+
+# Copied in by `make image-context` so the OCR image's build context is
+# self-contained; the binary itself is build output.
+/build/ocr/bootstrap
