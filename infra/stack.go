@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdaeventsources"
@@ -135,11 +136,37 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 		"TABLE_NAME":    table.TableName(),
 		"UPLOAD_BUCKET": uploads.BucketName(),
 	})
+	// Recognize ships as a container image: it is the only step that needs
+	// the Tesseract engine and poppler, neither of which Lambda's managed
+	// runtimes carry. It also gets the most memory and the longest timeout,
+	// because OCR dominates the pipeline's runtime and Lambda scales CPU
+	// with memory.
+	recognize := awslambda.NewDockerImageFunction(stack, jsii.String("Recognize"), &awslambda.DockerImageFunctionProps{
+		Code: awslambda.DockerImageCode_FromImageAsset(jsii.String("../build/ocr"), &awslambda.AssetImageCodeProps{
+			Platform: awsecrassets.Platform_LINUX_ARM64(),
+		}),
+		Architecture: awslambda.Architecture_ARM_64(),
+		MemorySize:   jsii.Number(2048),
+		Timeout:      awscdk.Duration_Minutes(jsii.Number(2)),
+		Environment: &map[string]*string{
+			"LOG_LEVEL":     jsii.String(logLevelFor(props.Stage)),
+			"TABLE_NAME":    table.TableName(),
+			"UPLOAD_BUCKET": uploads.BucketName(),
+			"OCR_PROVIDER":  jsii.String("tesseract"),
+		},
+		LogGroup: newLogGroup(stack, "Recognize"),
+	})
+
+	extract := goFunction(stack, "Extract", "extract", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME":    table.TableName(),
+		"UPLOAD_BUCKET": uploads.BucketName(),
+	})
+
 	finish := goFunction(stack, "Finish", "finish", props.Stage, assetRoot, map[string]*string{
 		"TABLE_NAME": table.TableName(),
 	})
 
-	workflow := newWorkflow(stack, validate, finish, removalPolicy)
+	workflow := newWorkflow(stack, validate, recognize, extract, finish, removalPolicy)
 
 	users := newIdentity(stack, props.Stage, removalPolicy)
 	api := newHttpApi(stack, users, createJob, getJob)
@@ -223,6 +250,34 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 		Resources: &[]*string{uploads.ArnForObjects(jsii.String("uploads/*"))},
 	}))
 
+	// Recognize reads the upload, writes the three renditions, and records
+	// one step result. It cannot change a job's status.
+	recognize.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:PutItem"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	recognize.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("s3:GetObject"),
+		Resources: &[]*string{uploads.ArnForObjects(jsii.String("uploads/*"))},
+	}))
+	recognize.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		// Written under their own prefix, which is also the prefix the
+		// upload notification ignores.
+		Actions:   jsii.Strings("s3:PutObject"),
+		Resources: &[]*string{uploads.ArnForObjects(jsii.String("derived/*"))},
+	}))
+
+	// Extract reads the recognized text back and stores the result. It
+	// never touches the customer's original document.
+	extract.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:PutItem"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	extract.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("s3:GetObject"),
+		Resources: &[]*string{uploads.ArnForObjects(jsii.String("derived/*"))},
+	}))
+
 	finish.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions:   jsii.Strings("dynamodb:UpdateItem"),
 		Resources: &[]*string{table.TableArn()},
@@ -267,18 +322,27 @@ func uploadOrigins(configured []string) []string {
 //
 // The asset is <assetRoot>/<command>, which `make build` fills with a
 // linux/arm64 bootstrap. Run it before synth or the asset is missing.
-func goFunction(scope constructs.Construct, id, command string, stage Stage, assetRoot string, environment map[string]*string) awslambda.Function {
-	logGroup := awslogs.NewLogGroup(scope, jsii.String(id+"Logs"), &awslogs.LogGroupProps{
-		// Without this the group never expires, and the bill grows on its own.
+// newLogGroup gives a function a group that expires. Without one the group
+// never expires, and the bill grows on its own.
+func newLogGroup(scope constructs.Construct, id string) awslogs.LogGroup {
+	return awslogs.NewLogGroup(scope, jsii.String(id+"Logs"), &awslogs.LogGroupProps{
 		Retention:     awslogs.RetentionDays_ONE_WEEK,
 		RemovalPolicy: awscdk.RemovalPolicy_DESTROY,
 	})
+}
 
-	logLevel := "debug"
+// logLevelFor keeps dev noisy and production quiet.
+func logLevelFor(stage Stage) string {
 	if stage == StageProd {
-		logLevel = "info"
+		return "info"
 	}
-	env := map[string]*string{"LOG_LEVEL": jsii.String(logLevel)}
+	return "debug"
+}
+
+func goFunction(scope constructs.Construct, id, command string, stage Stage, assetRoot string, environment map[string]*string) awslambda.Function {
+	logGroup := newLogGroup(scope, id)
+
+	env := map[string]*string{"LOG_LEVEL": jsii.String(logLevelFor(stage))}
 	for key, value := range environment {
 		env[key] = value
 	}

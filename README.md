@@ -64,10 +64,14 @@ make lint test       # both Go modules
 make build           # linux/arm64 bootstrap binaries
 make test-int        # integration tests; starts the local services first
 make test-infra      # CDK assertion tests
-make synth           # synthesize the stack (builds the assets first)
+make synth           # synthesize the stack (builds the assets first; needs Docker)
 make up / make down  # DynamoDB Local and S3Mock
 make fmt
 ```
+
+`make synth` needs Docker too: the recognition function is a container
+image, and synthesizing a Docker asset builds it. On an amd64 machine that
+means QEMU, which Docker Desktop provides and CI sets up explicitly.
 
 `make test-int` needs Docker. It runs the tests behind the `integration`
 build tag against DynamoDB Local and S3Mock, which is where the conditional
@@ -166,9 +170,10 @@ It currently creates:
 | DynamoDB table | single table, on-demand, TTL on `expiresAt` |
 | S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
 | Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
+| `recognize` | arm64 container image from `build/ocr`, carrying Tesseract and poppler: 81 MB |
 | Upload queue and its dead letters | three attempts, then the message stops being redelivered |
 | S3 notification | filtered to `uploads/`, so derived artifacts do not start a workflow |
-| Step Functions workflow | Standard; `Validate` then `MarkDone`, with a catch routing to `MarkFailed` |
+| Step Functions workflow | Standard; `Validate`, `Recognize`, `Extract`, `MarkDone`, each with a catch routing to `MarkFailed` |
 | Log groups | one week of retention, set explicitly |
 
 **There is no API Gateway yet.** The handlers read their caller from a JWT
