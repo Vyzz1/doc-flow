@@ -14,9 +14,13 @@ Flow:
 Client -> API Gateway (HTTP API, Cognito JWT authorizer) -> Lambda create-job
        -> presigned S3 URL + job PENDING in DynamoDB
 Client -> S3 (uploads/) -> S3 Event -> SQS -> Lambda starter -> Step Functions (Standard)
-  Validate -> [Preprocess + Thumbnail] -> OCR (Tesseract; fallback Textract if low confidence)
-           -> Extract fields -> Save results
+  Validate -> Recognize (render, thumbnail, OCR) -> Extract (fields + save)
   Catch -> mark FAILED -> SQS DLQ
+
+  Recognize is one state rather than three because only its container image has
+  poppler, so only it can render a PDF; see docs/adr/0003-recognition-is-one-state.md.
+  Tesseract is the engine. A Textract fallback for low-confidence results is
+  designed but not implemented, and stays gated by internal/quota when it is.
 Progress: GET /jobs/{id} polling (WebSocket API is a stretch goal)
 Dashboard: static React app on S3 + CloudFront
 ```
