@@ -357,9 +357,10 @@ What it does not cover:
   multi-page path have run only in tests.
 - **The prod stage.** Only `dev` is deployed; `prod`'s retention and Cognito
   differences are covered by assertions alone.
-- **Latency.** One run sat `PENDING` for about 35 seconds before the starter
-  picked the upload up. That interval spans the S3 event, the queue, and the
-  starter, and has not been broken down.
+- **Latency under load.** Over three runs the starter began one to two
+  seconds after S3 stored the upload, so the event and the queue add little.
+  Those runs were single, spaced-out jobs; nothing has measured it with
+  several in flight.
 - **Load and cost.** Nothing has measured transitions or invocations per job
   against the free tier.
 
