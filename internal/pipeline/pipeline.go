@@ -17,8 +17,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"docflow/internal/model"
+	"docflow/internal/ocr"
+	"docflow/internal/preprocess"
+	"docflow/internal/storage"
+	"docflow/internal/validation"
 )
 
 // State is the payload Step Functions carries between states.
@@ -68,9 +73,12 @@ type lambdaCause struct {
 
 // Reason returns a short, user-safe explanation of the captured failure.
 //
-// A permanent failure's message is one this code wrote, naming a step and a
-// cause, so it can be repeated. A transient one carries whatever AWS said,
-// which may name a table or a bucket, so only the fact of it travels.
+// A permanent failure's message starts with a sentence written for the user,
+// followed by reasonSeparator and the technical detail, so only the part
+// before the separator is repeated. A message without the separator is not
+// one this code wrote, and a transient failure carries whatever AWS said,
+// which may name a table or a bucket; both report only that processing
+// failed.
 func (e *TaskError) Reason() string {
 	if e == nil {
 		return defaultFailureReason
@@ -79,11 +87,21 @@ func (e *TaskError) Reason() string {
 		return defaultFailureReason
 	}
 	var cause lambdaCause
-	if err := json.Unmarshal([]byte(e.Cause), &cause); err != nil || cause.ErrorMessage == "" {
+	if err := json.Unmarshal([]byte(e.Cause), &cause); err != nil {
 		return defaultFailureReason
 	}
-	return cause.ErrorMessage
+	reason, _, found := strings.Cut(cause.ErrorMessage, reasonSeparator)
+	if !found || reason == "" {
+		return defaultFailureReason
+	}
+	return reason
 }
+
+// reasonSeparator divides a PermanentError's message into what a user may be
+// told and what only the logs and the execution history should hold. The
+// message is all that crosses from a Lambda to the state machine, so this is
+// how the two travel together.
+const reasonSeparator = " | "
 
 // permanentErrorName is what the Lambda runtime reports for a
 // *PermanentError, and what the state machine matches on. A test pins it to
@@ -98,8 +116,10 @@ type PermanentError struct {
 	Err  error
 }
 
+// Error leads with the sentence a user may be shown and keeps the detail
+// after it: Reason relies on that order.
 func (e *PermanentError) Error() string {
-	return fmt.Sprintf("%s: %v", e.Step, e.Err)
+	return fmt.Sprintf("%s%s%s: %v", publicReason(e.Err), reasonSeparator, e.Step, e.Err)
 }
 
 func (e *PermanentError) Unwrap() error { return e.Err }
@@ -139,14 +159,56 @@ func IsTransient(err error) bool {
 	return ok
 }
 
+// errUnreadable marks a file that passed validation but cannot be decoded or
+// rendered: damaged, truncated, or not what its first bytes claimed.
+var errUnreadable = errors.New("file is damaged or cannot be read")
+
+// publicReasons are the sentences a user is shown, by the failure that
+// caused them. They say what is wrong with the document or what to do, never
+// how the pipeline found out. Order matters only for errors that wrap more
+// than one of these.
+var publicReasons = []struct {
+	err    error
+	reason string
+}{
+	{validation.ErrEmpty, "The file is empty."},
+	{validation.ErrTooLarge, "The file is larger than the size limit."},
+	{validation.ErrUnrecognized, "The file is not a supported document type."},
+	{validation.ErrTypeMismatch, "The file's contents do not match the type it was uploaded as."},
+	{validation.ErrNotAccepted, "This kind of document does not accept that file type."},
+	{storage.ErrNotFound, "No file was found for this job. Upload it again."},
+	{errUnreadable, "The file is damaged or cannot be read."},
+	{preprocess.ErrTooLarge, "The image is too large to process."},
+	{preprocess.ErrEmptyImage, "The image is empty."},
+	{preprocess.ErrUnsupported, "The file type cannot be processed."},
+	{ocr.ErrUnsupported, "The file type cannot be processed."},
+	{ocr.ErrNoText, "No text could be read from the document."},
+	{ocr.ErrEmptyPDF, "The PDF has no pages."},
+}
+
+// defaultPublicReason is what a permanent failure with no entry above says.
+const defaultPublicReason = "The document could not be processed."
+
+// publicReason returns the user-safe sentence for a permanent failure's
+// cause. An unlisted cause gets the default: an error this code did not
+// anticipate may say anything, a bucket name included.
+func publicReason(err error) string {
+	for _, known := range publicReasons {
+		if errors.Is(err, known.err) {
+			return known.reason
+		}
+	}
+	return defaultPublicReason
+}
+
 // UserMessage returns a short, user-safe reason for a failure.
 //
-// It is what reaches the job record and the API, so it carries the step and
-// the cause but never a bucket name, a table name, or an AWS request id.
+// It is what reaches the job record and the API, so it never carries a
+// bucket name, a table name, a file's bytes, or an AWS request id.
 func UserMessage(err error) string {
 	var permanent *PermanentError
 	if errors.As(err, &permanent) {
-		return fmt.Sprintf("%s failed: %v", permanent.Step, permanent.Err)
+		return publicReason(permanent.Err)
 	}
 	var transient *TransientError
 	if errors.As(err, &transient) {

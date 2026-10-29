@@ -145,6 +145,14 @@ result. Ownership needs no separate check: a job lives under its owner's
 partition key, so another user's id simply does not find it, and a caller
 cannot learn whether someone else's job exists.
 
+A `FAILED` job carries a `failureReason`, a sentence written for the person
+who uploaded the document, such as `The file is not a supported document type.`
+It never holds the pipeline's own wording, a file's bytes, or a resource name.
+The technical detail stays in the function logs and in the failed execution's
+history, under the same `jobId`. A failure with no known cause reads `The
+document could not be processed.`, and one that exhausted its retries reads
+`processing failed`.
+
 A malformed id is rejected before any read, so a bad path costs no capacity.
 
 ## Infrastructure
