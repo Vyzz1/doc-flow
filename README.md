@@ -210,14 +210,14 @@ on code that does not ship.
 
 ## Smoke test
 
-`scripts/smoke-dev.bash` runs one job from upload to `DONE` against a
-deployed stack. It is the only check that touches real AWS, so it is manual
+`scripts/smoke-dev.bash` runs documents from upload to a terminal status
+against a deployed stack. It is the only check that touches real AWS, so it is manual
 and not part of CI.
 
 ```sh
 aws configure                       # once, region ap-southeast-1
-bash scripts/smoke-dev.bash         # draws an invoice with Pillow
-bash scripts/smoke-dev.bash scan.pdf   # or send your own png, jpg or pdf
+bash scripts/smoke-dev.bash         # draws its own documents with Pillow
+bash scripts/smoke-dev.bash scan.pdf   # or send one png, jpg or pdf of yours
 ```
 
 Needs `curl`, `jq`, and Python with Pillow when no file is given. It reads the
@@ -227,9 +227,15 @@ API URL and Cognito ids from the stack outputs (`STACK`, default
 - `POST /jobs` without a token returns 401;
 - S3 refuses an upload of the wrong content type (403) and one over
   `maxBytes` (400 or 403), which S3Mock cannot prove;
-- a valid upload reaches `DONE` within `TIMEOUT` seconds (default 180).
+- a PNG invoice reaches `DONE` with extracted fields within `TIMEOUT`
+  seconds (default 180);
+- a two page PDF reaches `DONE` and reports two pages;
+- a file that is not a PNG ends `FAILED` in `validate`, and a PNG signature
+  with nothing behind it ends `FAILED` in `ocr`, each with a failure reason.
 
-It creates a few DynamoDB items and one S3 object, which expire after seven
+With a file argument it runs only the happy path on that file.
+
+It creates a few DynamoDB items and S3 objects, which expire after seven
 days, and uses Lambda and Step Functions within the free tier.
 
 ## Configuration
