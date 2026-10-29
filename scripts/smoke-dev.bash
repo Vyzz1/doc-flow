@@ -134,13 +134,15 @@ signed fields: $(jq -c '.uploadFields | keys' "$work/job.json")"
 echo "204 ok"
 
 say "Polling GET /jobs/$job (up to ${TIMEOUT}s)"
-deadline=$((SECONDS + TIMEOUT))
+started=$SECONDS
+deadline=$((started + TIMEOUT))
 last=""
 while :; do
   curl -s "$api/jobs/$job" -H "Authorization: Bearer $token" >"$work/get.json"
   status=$(jq -r '.status // empty' "$work/get.json" | clean)
   if [[ $status != "$last" ]]; then
-    printf '[%3ss] %s\n' "$SECONDS" "${status:-<no status>}"
+    # Seconds since the upload finished, not since the script started.
+    printf '[%3ss] %s\n' "$((SECONDS - started))" "${status:-<no status>}"
     last=$status
   fi
   [[ $status == DONE || $status == FAILED ]] && break
