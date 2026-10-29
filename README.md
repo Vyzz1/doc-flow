@@ -51,11 +51,11 @@ holds their reusable logic.
 
 ## Local checks
 
-Requires Go 1.26.9 or newer, GNU Make, and golangci-lint v2 (verified with
-v2.12.2). The floor is 1.26.9 rather than 1.26.2 because govulncheck reports
-ten stdlib advisories, in `net/http`, `net/textproto`, `crypto/tls`, and
+Requires Go 1.26.10 or newer, GNU Make, and golangci-lint v2 (verified with
+v2.12.2). The floor is 1.26.10 rather than 1.26.2 because govulncheck reports
+eleven stdlib advisories, in `net/http`, `net/textproto`, `crypto/tls`, `crypto/x509`, and
 `net/url`, as reachable once the AWS SDK makes real HTTP calls; they are all
-fixed in 1.26.9. If `go build` reports `go.mod requires go >= 1.26.9`, install
+fixed in 1.26.10. If `go build` reports `go.mod requires go >= 1.26.10`, install
 it or set `GOTOOLCHAIN=auto` to let Go fetch it. Install the linter using its [official installation instructions](https://golangci-lint.run/docs/welcome/install/local/).
 No external application dependencies are installed.
 
