@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -125,15 +126,25 @@ func (s *S3) PresignUpload(ctx context.Context, key, contentType string, maxByte
 			// An empty object is never a document, and the upper bound is
 			// what keeps one caller from spending the project's budget.
 			[]any{"content-length-range", 1, maxBytes},
+			// The SDK signs the key but not the content type, so without
+			// this condition S3 refuses a Content-Type field as "extra" and
+			// accepts a body of any type.
+			[]any{"eq", "$Content-Type", contentType},
 		}
 	})
 	if err != nil {
 		return Upload{}, fmt.Errorf("presign upload for %s: %w", key, err)
 	}
 
+	// The condition is only met by a form that carries the field, so hand it
+	// to the client with the rest.
+	fields := make(map[string]string, len(out.Values)+1)
+	maps.Copy(fields, out.Values)
+	fields["Content-Type"] = contentType
+
 	return Upload{
 		URL:       out.URL,
-		Fields:    out.Values,
+		Fields:    fields,
 		Key:       key,
 		MaxBytes:  maxBytes,
 		ExpiresAt: s.now().UTC().Add(ttl),

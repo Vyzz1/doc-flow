@@ -100,6 +100,22 @@ func TestPresignUpload(t *testing.T) {
 	if got.Fields["policy"] == "" {
 		t.Error("Upload carries no policy field, so a client cannot post")
 	}
+
+	// The SDK does not sign the content type itself. The policy has to say
+	// so, and the form has to carry the field the policy compares against.
+	var pinned bool
+	for _, condition := range f.options.Conditions {
+		if list, ok := condition.([]any); ok && len(list) == 3 &&
+			list[0] == "eq" && list[1] == "$Content-Type" && list[2] == "image/jpeg" {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Errorf("conditions %v do not pin the content type to image/jpeg", f.options.Conditions)
+	}
+	if got.Fields["Content-Type"] != "image/jpeg" {
+		t.Errorf("Fields[Content-Type] = %q, want image/jpeg", got.Fields["Content-Type"])
+	}
 }
 
 func TestPresignUploadDefaultsTTL(t *testing.T) {
