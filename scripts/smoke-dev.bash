@@ -117,11 +117,13 @@ expect_done() {
   [[ $status == DONE ]] || fail "job $job ended $status, want DONE"
 }
 
-# expect_failed FILE CONTENT_TYPE STEP: a broken upload. The job must end
-# FAILED with a reason, and the step that recorded the error must be STEP.
-# A job left PROCESSING would mean the state machine's catch did not fire.
+# expect_failed FILE CONTENT_TYPE STEP REASON: a broken upload. The job must
+# end FAILED, the step that recorded the error must be STEP, and the job's
+# failureReason must be exactly REASON: a sentence for the user, with none of
+# the pipeline's own wording. A job left PROCESSING would mean the state
+# machine's catch did not fire.
 expect_failed() {
-  local file=$1 type=$2 want=$3
+  local file=$1 type=$2 want=$3 sentence=$4
   create_job "$type"
   upload "$file"
   wait_for_job
@@ -132,6 +134,7 @@ expect_failed() {
   [[ -n $reason ]] || fail "job $job is FAILED with no failureReason"
   step=$(jq -r '[.steps[] | select(.error != null) | .step] | first // empty' "$work/get.json" | clean)
   [[ $step == "$want" ]] || fail "job $job failed in step '${step:-none}', want '$want'"
+  [[ $reason == "$sentence" ]] || fail "job $job failureReason is '$reason', want '$sentence'"
   echo "failed in $step: $reason"
 }
 
@@ -228,12 +231,14 @@ if [[ -z $given ]]; then
 
   # Rejected by the Validate step, whose magic byte check is the first catch.
   say "A file that is not a PNG must fail in validate"
-  expect_failed "$work/notimage.png" image/png validate
+  expect_failed "$work/notimage.png" image/png validate \
+    "The file is not a supported document type."
 
   # Passes the magic byte check, then cannot be decoded: the failure comes
   # from the container function, so this is the catch on Recognize.
   say "A PNG that cannot be decoded must fail in ocr"
-  expect_failed "$work/truncated.png" image/png ocr
+  expect_failed "$work/truncated.png" image/png ocr \
+    "The file is damaged or cannot be read."
 fi
 
 echo

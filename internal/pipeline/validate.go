@@ -54,7 +54,7 @@ func (h *Validate) Handle(ctx context.Context, state State) (State, error) {
 		if errors.Is(err, storage.ErrNotFound) {
 			// The client never uploaded, or the object has already expired.
 			// Neither improves with a retry.
-			return state, Permanent(model.StepValidate, errors.New("no object was uploaded"))
+			return state, Permanent(model.StepValidate, fmt.Errorf("no object was uploaded: %w", err))
 		}
 		return state, Transient(model.StepValidate, fmt.Errorf("read object size: %w", err))
 	}
@@ -62,7 +62,7 @@ func (h *Validate) Handle(ctx context.Context, state State) (State, error) {
 	header, err := h.Documents.ReadHeader(ctx, state.UploadKey, validation.HeaderSize)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return state, Permanent(model.StepValidate, errors.New("no object was uploaded"))
+			return state, Permanent(model.StepValidate, fmt.Errorf("no object was uploaded: %w", err))
 		}
 		return state, Transient(model.StepValidate, fmt.Errorf("read object header: %w", err))
 	}

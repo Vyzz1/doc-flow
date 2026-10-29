@@ -3,15 +3,19 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"docflow/internal/model"
+	"docflow/internal/ocr"
 	"docflow/internal/storage"
 	"docflow/internal/store"
+	"docflow/internal/validation"
 )
 
 // pdfBody is a stored object that validation will recognize.
@@ -88,9 +92,16 @@ func TestUserMessageKeepsInternalsOut(t *testing.T) {
 		want string
 	}{
 		{
-			name: "permanent carries the reason",
-			err:  Permanent(model.StepValidate, errors.New("file format not recognized")),
-			want: "validate failed: file format not recognized",
+			name: "permanent says what is wrong with the document",
+			err:  Permanent(model.StepValidate, validation.ErrUnrecognized),
+			want: "The file is not a supported document type.",
+		},
+		{
+			// An error this code did not anticipate may say anything, so
+			// it is not repeated.
+			name: "an unlisted permanent cause gets the default",
+			err:  Permanent(model.StepOCR, errors.New("open s3://docflow-prod/uploads/u/j: denied")),
+			want: defaultPublicReason,
 		},
 		{
 			// A transient failure's cause is an AWS message that may name a
@@ -363,11 +374,22 @@ func TestTaskErrorReason(t *testing.T) {
 		want string
 	}{
 		{
-			// This message was written by our own code and names a step and
-			// a cause, so it is safe to show.
+			// Only the sentence before the separator is for the user.
 			name: "permanent",
-			err:  &TaskError{Error: "PermanentError", Cause: `{"errorMessage":"validate: file format not recognized","errorType":"PermanentError"}`},
-			want: "validate: file format not recognized",
+			err:  &TaskError{Error: "PermanentError", Cause: `{"errorMessage":"The file is not a supported document type. | validate: file format not recognized","errorType":"PermanentError"}`},
+			want: "The file is not a supported document type.",
+		},
+		{
+			// A message with no separator was not written by this code, so
+			// none of it is shown.
+			name: "permanent without a user sentence",
+			err:  &TaskError{Error: "PermanentError", Cause: `{"errorMessage":"validate: leading bytes 7468: file format not recognized: permanent","errorType":"PermanentError"}`},
+			want: defaultFailureReason,
+		},
+		{
+			name: "permanent with an empty user sentence",
+			err:  &TaskError{Error: "PermanentError", Cause: `{"errorMessage":" | validate: detail","errorType":"PermanentError"}`},
+			want: defaultFailureReason,
 		},
 		{
 			// This one carries whatever AWS said, which may name a table.
@@ -390,6 +412,81 @@ func TestTaskErrorReason(t *testing.T) {
 	}
 }
 
+// A job's failure reason is what the API shows a user. This follows a real
+// failure the way it travels: the error a step returns, the message the
+// Lambda runtime encodes into the catch block, and the reason Finish stores.
+func TestPermanentFailuresReachTheJobAsUserSentences(t *testing.T) {
+	tests := []struct {
+		name string
+		step model.StepName
+		err  error
+		want string
+	}{
+		{
+			name: "not a document",
+			step: model.StepValidate,
+			err:  fmt.Errorf("leading bytes 7468697320697320: %w: %w", validation.ErrUnrecognized, validation.ErrPermanent),
+			want: "The file is not a supported document type.",
+		},
+		{
+			name: "too large",
+			step: model.StepValidate,
+			err:  fmt.Errorf("%d bytes: %w: %w", 11<<20, validation.ErrTooLarge, validation.ErrPermanent),
+			want: "The file is larger than the size limit.",
+		},
+		{
+			name: "never uploaded",
+			step: model.StepValidate,
+			err:  fmt.Errorf("no object was uploaded: %w", storage.ErrNotFound),
+			want: "No file was found for this job. Upload it again.",
+		},
+		{
+			name: "does not decode",
+			step: model.StepOCR,
+			err:  fmt.Errorf("decode page: %w: %w", errUnreadable, errors.New("read image/png header: unexpected EOF")),
+			want: "The file is damaged or cannot be read.",
+		},
+		{
+			name: "blank document",
+			step: model.StepOCR,
+			err:  ocr.ErrNoText,
+			want: "No text could be read from the document.",
+		},
+		{
+			name: "unlisted cause",
+			step: model.StepExtract,
+			err:  errors.New("provider \"ocrspace\": unknown OCR provider"),
+			want: defaultPublicReason,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			returned := Permanent(tt.step, tt.err)
+
+			// The runtime puts the returned error's text in errorMessage.
+			cause, err := json.Marshal(lambdaCause{ErrorMessage: returned.Error(), ErrorType: permanentErrorName})
+			if err != nil {
+				t.Fatalf("marshal cause: %v", err)
+			}
+			reason := (&TaskError{Error: permanentErrorName, Cause: string(cause)}).Reason()
+
+			if reason != tt.want {
+				t.Errorf("Reason() = %q, want %q", reason, tt.want)
+			}
+			// What the user sees must not be how the pipeline found out.
+			for _, internal := range []string{"permanent", "leading bytes", "unexpected EOF", "ocrspace", string(tt.step) + ":"} {
+				if strings.Contains(reason, internal) {
+					t.Errorf("reason %q leaks %q", reason, internal)
+				}
+			}
+			// The detail is not lost: logs and the execution history keep it.
+			if !strings.Contains(returned.Error(), tt.err.Error()) {
+				t.Errorf("error text %q dropped the detail %q", returned.Error(), tt.err)
+			}
+		})
+	}
+}
+
 func TestTaskErrorNameMatchesTheType(t *testing.T) {
 	want := reflect.TypeOf(Permanent(model.StepValidate, errors.New("x"))).Elem().Name()
 	if permanentErrorName != want {
@@ -403,13 +500,13 @@ func TestFinishUsesTheCapturedError(t *testing.T) {
 	state.Failed = true
 	state.Error = &TaskError{
 		Error: "PermanentError",
-		Cause: `{"errorMessage":"validate: file format not recognized","errorType":"PermanentError"}`,
+		Cause: `{"errorMessage":"The file is not a supported document type. | validate: file format not recognized","errorType":"PermanentError"}`,
 	}
 
 	if _, err := newFinish(jobs).Handle(context.Background(), state); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
-	if len(jobs.failCalls) != 1 || jobs.failCalls[0].reason != "validate: file format not recognized" {
+	if len(jobs.failCalls) != 1 || jobs.failCalls[0].reason != "The file is not a supported document type." {
 		t.Errorf("fail calls = %v, want the captured reason", jobs.failCalls)
 	}
 }

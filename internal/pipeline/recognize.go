@@ -83,7 +83,7 @@ func (h *Recognize) Handle(ctx context.Context, state State) (State, error) {
 	body, err := h.Documents.Read(ctx, state.UploadKey)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return state, Permanent(model.StepOCR, errors.New("the uploaded document is gone"))
+			return state, Permanent(model.StepOCR, fmt.Errorf("the uploaded document is gone: %w", err))
 		}
 		return state, Transient(model.StepOCR, fmt.Errorf("read upload: %w", err))
 	}
@@ -142,7 +142,7 @@ func (h *Recognize) pages(ctx context.Context, state State, work string, body []
 		if err != nil {
 			// A PDF the tool cannot open will not open on the second
 			// attempt either.
-			return nil, Permanent(model.StepOCR, fmt.Errorf("render pdf: %w", err))
+			return nil, Permanent(model.StepOCR, fmt.Errorf("render pdf: %w: %w", errUnreadable, err))
 		}
 		rendered := make([]page, 0, len(paths))
 		for _, path := range paths {
@@ -184,7 +184,7 @@ func (h *Recognize) writeRenditions(ctx context.Context, state *State, first pag
 		// Validation recognized the format from its magic bytes, so a file
 		// that will not decode is damaged rather than unsupported. Either
 		// way a retry changes nothing.
-		return Permanent(model.StepOCR, fmt.Errorf("decode page: %w", err))
+		return Permanent(model.StepOCR, fmt.Errorf("decode page: %w: %w", errUnreadable, err))
 	}
 
 	normalized, err := preprocess.Normalize(image)
