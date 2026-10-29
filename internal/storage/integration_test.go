@@ -255,8 +255,9 @@ func TestLivePresignedPostIsUsable(t *testing.T) {
 // The size limit lives in the signed policy, and only the storage service
 // can enforce it. S3Mock does not evaluate POST policies, so this records
 // what it does rather than asserting what S3 would: the limit is covered by
-// a unit test on the signed conditions, and only a real deployment proves
-// it is applied.
+// a unit test on the signed conditions. Against real S3 the limit and the
+// content type are enforced; scripts/smoke-dev.bash checks both on a
+// deployed stack.
 func TestLivePolicyEnforcementIsNotProvenHere(t *testing.T) {
 	storage, _ := newLiveStorage(t)
 	key := liveKey(t)

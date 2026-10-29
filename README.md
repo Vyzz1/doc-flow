@@ -206,6 +206,30 @@ asserts the stack creates nothing that bills while idle.
 tooling that never reaches a deployed artifact, and scanning it would report
 on code that does not ship.
 
+## Smoke test
+
+`scripts/smoke-dev.bash` runs one job from upload to `DONE` against a
+deployed stack. It is the only check that touches real AWS, so it is manual
+and not part of CI.
+
+```sh
+aws configure                       # once, region ap-southeast-1
+bash scripts/smoke-dev.bash         # draws an invoice with Pillow
+bash scripts/smoke-dev.bash scan.pdf   # or send your own png, jpg or pdf
+```
+
+Needs `curl`, `jq`, and Python with Pillow when no file is given. It reads the
+API URL and Cognito ids from the stack outputs (`STACK`, default
+`DocFlow-dev`), creates a throwaway user and deletes it on exit. It checks that:
+
+- `POST /jobs` without a token returns 401;
+- S3 refuses an upload of the wrong content type (403) and one over
+  `maxBytes` (400 or 403), which S3Mock cannot prove;
+- a valid upload reaches `DONE` within `TIMEOUT` seconds (default 180).
+
+It creates a few DynamoDB items and one S3 object, which expire after seven
+days, and uses Lambda and Step Functions within the free tier.
+
 ## Configuration
 
 | Variable | Used by | Meaning |
