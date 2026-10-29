@@ -2,15 +2,15 @@
 
 A low-cost, serverless document-processing pipeline on AWS.
 
-Status: early Go scaffold. `internal/model` holds the implemented domain types;
-every other package is a package declaration with TODOs, and the commands do not
-run Lambda handlers or process documents yet.
+Status: the backend is implemented and has been deployed to a dev stack, where
+`scripts/smoke-dev.bash` runs a document from upload to `DONE`. The dashboard
+(`web/`) is not started.
 
-## Planned flow
+## Flow
 
 API Gateway -> create job -> presigned S3 upload -> SQS -> starter -> Step Functions
-Standard -> validate -> preprocess and thumbnail -> OCR -> extract -> save results.
-The client polls job status through the get-job API.
+Standard -> validate -> recognize (render, thumbnail, OCR) -> extract (fields and
+save) -> mark done. The client polls job status through the get-job API.
 
 Tesseract is the default OCR provider. Textract fallback requires a per-user daily
 quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit;
@@ -41,13 +41,12 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 - `docs/architecture.md`: how the pieces fit, what is decided, and what is
   not verified.
 - `docs/adr/`: architecture decision records.
-- `infra/`: the CDK app, a separate Go module holding the table, bucket, and
-  Lambdas.
-- `web/` will be added when implementation begins.
+- `infra/`: the CDK app, a separate Go module holding the table, bucket,
+  queues, Lambdas, workflow, HTTP API, and Cognito user pool.
+- `scripts/`: `smoke-dev.bash`, the end-to-end check against a deployed stack.
+- `web/` will be added when the dashboard starts.
 
-The worker placeholder will be split into individual processing Lambda commands
-as those steps are implemented. `cmd/` holds executable entrypoints; `internal/`
-holds their reusable logic.
+`cmd/` holds executable entrypoints; `internal/` holds their reusable logic.
 
 ## Local checks
 
@@ -87,17 +86,12 @@ seconds rather than milliseconds, so those tests have their own target.
 `make lint` checks errors, static analysis, unused code, and formatting. CI runs
 the same targets, so a green `make lint test build` locally means a green build.
 `make fmt` applies gofmt and goimports. `make build` produces Linux/arm64
-executables at `bin/<command>/bootstrap` with cgo disabled. These are still
-placeholder commands, not functioning Lambda handlers.
+executables at `bin/<command>/bootstrap` with cgo disabled; these are the
+Lambda handlers the stack deploys.
 
-`internal/model`, `internal/logging`, and `internal/store` are covered by
-table-driven unit tests; the store is tested against a fake of the four
-DynamoDB calls it makes. The other packages have no tests yet because no
-behavior has been implemented.
-
-Integration tests against DynamoDB Local are **not** wired up yet, so there is
-no `make test-int` target despite AGENTS.md mentioning one. The local Docker
-environment, frontend lint, and CDK checks remain TODOs for the next stage.
+Every package under `internal/` has table-driven unit tests against fakes,
+and `make test-infra` asserts on the synthesized template. Frontend lint
+waits for `web/`.
 
 ## API
 
@@ -169,6 +163,8 @@ It currently creates:
 |---|---|
 | DynamoDB table | single table, on-demand, TTL on `expiresAt` |
 | S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
+| HTTP API | `POST /jobs` and `GET /jobs/{id}`, each naming the Cognito JWT authorizer |
+| Cognito user pool and app client | Lite plan, self sign-up off |
 | Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
 | `recognize` | arm64 container image from `build/ocr`, carrying Tesseract and poppler: 81 MB |
 | Upload queue and its dead letters | three attempts, then the message stops being redelivered |
@@ -176,10 +172,9 @@ It currently creates:
 | Step Functions workflow | Standard; `Validate`, `Recognize`, `Extract`, `MarkDone`, each with a catch routing to `MarkFailed` |
 | Log groups | one week of retention, set explicitly |
 
-**There is no API Gateway yet.** The handlers read their caller from a JWT
-authorizer, and which issuer signs those tokens is still an open decision, so
-the HTTP API is the first job of the next phase. Until then the functions
-deploy but nothing routes to them.
+The handlers read their caller from the JWT authorizer's verified `sub`;
+[ADR 0002](docs/adr/0002-cognito-for-authentication.md) records why Cognito
+issues the tokens.
 
 Two stages, chosen with `-c stage=`:
 
@@ -190,6 +185,13 @@ npx cdk synth                       # dev: DESTROY on teardown, debug logging
 npx cdk synth -c stage=prod         # prod: RETAIN, info logging, no auto-delete helper
 npx cdk synth -c uploadOrigins=https://app.example   # restrict the upload CORS
 ```
+
+Deploying is a manual step and needs your own AWS account: `make synth`,
+then `cd infra && npx cdk diff` and `npx cdk deploy`, after a one-time
+`npx cdk bootstrap`. The stack outputs the API URL, user pool and client ids,
+the state machine, the table, the bucket, and the dead-letter queue. Check a
+deployment with the [smoke test](#smoke-test). `npx cdk destroy` removes the
+dev stack, upload bucket included.
 
 Nothing in the stack runs when idle. The table bills per request, Lambda bills
 per invocation, and the log groups expire, which is the one cost that
@@ -254,6 +256,8 @@ requests, Mondays at 02:00 UTC, and on demand:
 | Job | Does |
 |---|---|
 | `Go lint, test, build` | `make lint`, `go test -race -shuffle=on`, `make build`, tidy and clean-tree check |
+| `CDK lint, test, synth` | the infra module's lint and assertion tests, then a synth with the container image |
+| `Integration tests` | the `integration` build tag against DynamoDB Local and S3Mock |
 | `govulncheck` | `govulncheck ./...` |
 | `Merge` | squash-merges the pull request and deletes the branch |
 
@@ -262,7 +266,7 @@ means a green build.
 
 ### Merge
 
-The merge job `needs` the other two, so it runs only when lint, test, build,
+The merge job `needs` the other four, so it runs only when lint, test, build,
 and the vulnerability scan have all passed. It merges pull requests opened by
 the repository owner, an organization member, or a collaborator, from a branch
 in this repository, that are not drafts. Bots, outside contributors, and forks

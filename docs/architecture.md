@@ -14,13 +14,15 @@ the decisions that departed from them.
 |---|---|
 | Domain model, logging, persistence | implemented |
 | Presigned uploads, the two API handlers | implemented |
-| Infrastructure for everything below | implemented, **never deployed** |
+| Infrastructure for everything below | implemented, deployed to a dev stack |
 | Upload queue, workflow starter, validation | implemented |
 | Recognition and field extraction | implemented |
 | HTTP API, Cognito authorizer | implemented |
 | Dashboard | not started |
 
-Nothing has run on AWS. See [What is not verified](#what-is-not-verified).
+The dev stack has run one image through the whole workflow to `DONE`; see
+[What is verified, and how](#what-is-verified-and-how) and
+[What is not verified](#what-is-not-verified).
 
 ## Flow
 
@@ -328,6 +330,7 @@ id is committed.
 | Unit tests | fakes | each package's logic, including its failure paths |
 | Integration tests | DynamoDB Local, S3Mock | conditional writes really are conditional, ranged reads return the range, items carry the TTL attribute |
 | CDK assertions | the synthesized template | the IAM statements, the resource shapes, the absence of anything always-on |
+| Smoke test (`scripts/smoke-dev.bash`, manual) | the deployed dev stack | S3 events reach the queue, the IAM policies suffice, arm64 functions bootstrap, the states' payloads fit together, S3 enforces the upload policy, and a PNG invoice reaches `DONE` with its fields |
 
 The integration tests are the ones worth naming. A fake can report that a
 condition expression was sent; only a database can show that twelve workers
@@ -336,39 +339,36 @@ for ten pages of quota spend ten and not eleven. Both are tested.
 
 ## What is not verified
 
-**No part of this has run on AWS.** That leaves gaps no local test closes:
+The smoke test covers one happy path on the dev stack. A first deployment
+closed what had been the largest gaps: an S3 event does reach the queue, the
+IAM policies were sufficient, an arm64 `provided.al2023` function bootstraps,
+the states' `OutputPath` and `ResultPath` expressions fit, and S3 refuses a
+wrong content type (403) and an oversized body (400). Response checksum
+validation, which is turned off against the local stand-ins, is on in
+production and passed. The deployment also found that the SDK's presigned
+POST did not pin the content type, which is now in the signed policy.
 
-- whether an S3 event actually reaches the queue
-- whether the IAM policies are *sufficient*, as opposed to being what the
-  code says they are
-- whether an arm64 `provided.al2023` function bootstraps
-- whether Step Functions passes payloads in the shape the steps expect,
-  which is now five states' worth of `OutputPath` and `ResultPath`
-  expressions rather than two
+What it does not cover:
 
-Two more came out of writing the integration tests, and are worth stating
-because a passing suite could be mistaken for covering them:
+- **The failure paths on AWS.** No deployed run has made a state fail, so the
+  `Catch` routes to `MarkFailed`, the retry rules, and the dead-letter queue
+  are asserted on the template and unit tested but have not been seen to work.
+- **A PDF.** The smoke test sends a PNG, so poppler's rendering and the
+  multi-page path have run only in tests.
+- **The prod stage.** Only `dev` is deployed; `prod`'s retention and Cognito
+  differences are covered by assertions alone.
+- **Latency.** One run sat `PENDING` for about 35 seconds before the starter
+  picked the upload up. That interval spans the S3 event, the queue, and the
+  starter, and has not been broken down.
+- **Load and cost.** Nothing has measured transitions or invocations per job
+  against the free tier.
 
-- **The upload size limit is not enforced in any test.** It lives in the
-  presigned POST's signed policy, and S3Mock does not evaluate POST
-  conditions: it accepted four kilobytes against a sixteen-byte policy. The
-  conditions themselves are asserted in a unit test; only S3 applies them.
-- **Response checksum validation is turned off against the stand-ins.**
-  S3Mock answers a ranged read with the whole object's checksum, and
-  DynamoDB Local returns none at all, so both would otherwise fail every
-  call. Production leaves validation on, and that it passes against the real
-  services is untested.
-
-All of these need a deployment.
+Step Functions Local was considered for the payload-shape question and
+turned down: AWS marks it unsupported, with no feature parity. The deployed
+workflow is the check that settled it.
 
 ## Open decisions
 
 | Question | Blocks |
 |---|---|
 | Whether CI enforces a coverage floor | nothing, but two gaps have slipped through now |
-
-Step Functions Local was considered for the payload-shape question and
-turned down: AWS marks it unsupported, with no feature parity, and building
-a suite on it would buy confidence it cannot justify. The shapes stay
-unverified until a deployment, or until the TestState API, which also needs
-an account.
