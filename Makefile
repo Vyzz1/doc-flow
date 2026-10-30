@@ -8,12 +8,12 @@ BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra
 
-.PHONY: help build image-context lint lint-go lint-infra lint-web fmt test test-web build-web test-int test-infra synth up down
+.PHONY: help build image-context lint lint-go lint-infra lint-web fmt fmt-web test test-web build-web test-int test-infra synth up down
 
 help:
 	@echo make build      - build Lambdas for linux/arm64 into bin/
 	@echo make lint       - check Go modules and Vue frontend
-	@echo make fmt        - format Go code and imports, both modules
+	@echo make fmt        - format Go modules and Vue frontend
 	@echo make test       - run Go and Vue unit tests
 	@echo make build-web  - build the static Vue frontend
 	@echo make test-int   - run integration tests against the local services
@@ -53,7 +53,10 @@ lint-infra:
 	cd $(INFRA) && $(GOLANGCI_LINT) run ./...
 	cd $(INFRA) && $(GOLANGCI_LINT) fmt --diff ./...
 
-fmt:
+fmt-web:
+	cd web && $(NPM) run format
+
+fmt: fmt-web
 	$(GOLANGCI_LINT) fmt ./...
 	cd $(INFRA) && $(GOLANGCI_LINT) fmt ./...
 

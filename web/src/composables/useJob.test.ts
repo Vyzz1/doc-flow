@@ -13,7 +13,10 @@ describe('reactive job query', () => {
     let oldSignal: AbortSignal | undefined
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const api: DocFlowApi = {
-      createJob: async () => { throw new Error('unused') }, upload: async () => {},
+      createJob: async () => {
+        throw new Error('unused')
+      },
+      upload: async () => {},
       getJob: async (_id, signal) => {
         if (subject.value === 'user-a') {
           oldSignal = signal
@@ -22,10 +25,15 @@ describe('reactive job query', () => {
         return { ...doneJob, docType: 'image' }
       },
     }
-    const view = render(defineComponent({ setup() {
-      const job = useJob(api, subject, ref(jobId))
-      return () => h('div', job.data.value?.docType ?? 'Loading')
-    } }), { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } })
+    const view = render(
+      defineComponent({
+        setup() {
+          const job = useJob(api, subject, ref(jobId))
+          return () => h('div', job.data.value?.docType ?? 'Loading')
+        },
+      }),
+      { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } },
+    )
     await waitFor(() => expect(oldSignal).toBeDefined())
     subject.value = 'user-b'
     await waitFor(() => expect(view.getByText('image')).toBeTruthy())
@@ -33,31 +41,69 @@ describe('reactive job query', () => {
     expect(client.getQueryData(['job', 'user-a', jobId])).toBeUndefined()
     client.clear()
   })
-  it.each(['DONE', 'FAILED'] as const)('does not poll a %s job again', async status => {
+  it.each(['DONE', 'FAILED'] as const)('does not poll a %s job again', async (status) => {
     let reads = 0
-    const api: DocFlowApi = { createJob: async () => { throw new Error('unused') }, upload: async () => {}, getJob: async () => { reads++; return { ...doneJob, status } } }
+    const api: DocFlowApi = {
+      createJob: async () => {
+        throw new Error('unused')
+      },
+      upload: async () => {},
+      getJob: async () => {
+        reads++
+        return { ...doneJob, status }
+      },
+    }
     const client = new QueryClient()
-    render(defineComponent({ setup() {
-      const query = useJob(api, ref('user'), ref(jobId))
-      return () => h('div', query.data.value?.status)
-    } }), { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } })
-    await waitFor(() => expect(client.getQueryData(['job', 'user', jobId])).toMatchObject({ status }))
+    render(
+      defineComponent({
+        setup() {
+          const query = useJob(api, ref('user'), ref(jobId))
+          return () => h('div', query.data.value?.status)
+        },
+      }),
+      { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } },
+    )
+    await waitFor(() =>
+      expect(client.getQueryData(['job', 'user', jobId])).toMatchObject({ status }),
+    )
     // Query's configured interval must stop after receiving the terminal result.
     const query = client.getQueryCache().find({ queryKey: ['job', 'user', jobId] })!
-    const interval = (query.options as { refetchInterval: (query: unknown) => number | false }).refetchInterval
+    const interval = (query.options as { refetchInterval: (query: unknown) => number | false })
+      .refetchInterval
     expect(interval(query)).toBe(false)
     expect(reads).toBe(1)
     client.clear()
   })
   it('stops automatic polling after a permanent error', async () => {
     const client = new QueryClient()
-    render(defineComponent({ setup() {
-      useJob({ createJob: async () => { throw new Error('unused') }, upload: async () => {}, getJob: async () => { throw new ApiError(404, 'Job not found.') } }, ref('user'), ref(jobId))
-      return () => h('div')
-    } }), { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } })
+    render(
+      defineComponent({
+        setup() {
+          useJob(
+            {
+              createJob: async () => {
+                throw new Error('unused')
+              },
+              upload: async () => {},
+              getJob: async () => {
+                throw new ApiError(404, 'Job not found.')
+              },
+            },
+            ref('user'),
+            ref(jobId),
+          )
+          return () => h('div')
+        },
+      }),
+      { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } },
+    )
     await waitFor(() => expect(client.getQueryState(['job', 'user', jobId])?.status).toBe('error'))
     const query = client.getQueryCache().find({ queryKey: ['job', 'user', jobId] })!
-    expect((query.options as { refetchInterval: (query: unknown) => number | false }).refetchInterval(query)).toBe(false)
+    expect(
+      (query.options as { refetchInterval: (query: unknown) => number | false }).refetchInterval(
+        query,
+      ),
+    ).toBe(false)
     client.clear()
   })
 })

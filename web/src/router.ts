@@ -12,9 +12,10 @@ export function createAppRouter(runtime: Runtime) {
     ],
     scrollBehavior: () => ({ top: 0 }),
   })
-  router.beforeEach(to => {
+  router.beforeEach((to) => {
     if (runtime.config.mode === 'setup') return true
-    if (to.path !== '/sign-in' && !runtime.auth.user.value) return { path: '/sign-in', query: { redirect: to.fullPath } }
+    if (to.path !== '/sign-in' && !runtime.auth.user.value)
+      return { path: '/sign-in', query: { redirect: to.fullPath } }
     if (to.path === '/sign-in' && runtime.auth.user.value) return '/'
     return true
   })

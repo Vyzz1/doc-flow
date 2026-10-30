@@ -3,9 +3,12 @@ import { expect, test } from '@playwright/test'
 test('demo upload completes and results tabs work without external requests', async ({ page }) => {
   const errors: string[] = []
   const external: string[] = []
-  page.on('pageerror', error => errors.push(error.message))
-  await page.route('**/*', route => {
-    if (new URL(route.request().url()).hostname !== '127.0.0.1') { external.push(route.request().url()); return route.abort() }
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.route('**/*', (route) => {
+    if (new URL(route.request().url()).hostname !== '127.0.0.1') {
+      external.push(route.request().url())
+      return route.abort()
+    }
     return route.continue()
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
@@ -15,7 +18,11 @@ test('demo upload completes and results tabs work without external requests', as
   await page.getByRole('button', { name: 'Explore demo workspace' }).click()
   await expect(page.getByRole('heading', { name: 'From document to data.' })).toBeVisible()
   await page.screenshot({ path: 'test-results/workspace-desktop.png', fullPage: true })
-  await page.getByLabel('Choose your file').setInputFiles({ name: 'invoice.png', mimeType: 'image/png', buffer: Buffer.from('local demo file') })
+  await page.getByLabel('Choose your file').setInputFiles({
+    name: 'invoice.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('local demo file'),
+  })
   await page.getByRole('button', { name: 'Upload & process' }).click()
   await expect(page.getByText('Processing', { exact: true })).toBeVisible()
   await expect(page.getByText('Completed', { exact: true })).toBeVisible({ timeout: 15000 })

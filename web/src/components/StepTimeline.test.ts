@@ -9,7 +9,14 @@ describe('step outcomes', () => {
     expect(view.queryByText('Running')).toBeNull()
   })
   it('shows failed outcomes and leaves later steps unreported', () => {
-    const view = render(StepTimeline, { props: { steps: [{ step: 'validate', status: 'FAILED', durationMs: 40, error: 'Unsupported document.' }], status: 'FAILED' } })
+    const view = render(StepTimeline, {
+      props: {
+        steps: [
+          { step: 'validate', status: 'FAILED', durationMs: 40, error: 'Unsupported document.' },
+        ],
+        status: 'FAILED',
+      },
+    })
     expect(view.getByText('Unsupported document.')).toBeInTheDocument()
     expect(view.getAllByText('Not reported')).toHaveLength(5)
   })

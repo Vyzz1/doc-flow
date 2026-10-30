@@ -11,10 +11,21 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
         <CardDescription>Connect your workspace to get started.</CardDescription>
       </CardHeader>
       <CardContent class="space-y-5 text-sm leading-6 text-muted-foreground">
-        <p class="flex items-center gap-2 font-medium text-foreground"><Settings2 class="size-4" aria-hidden="true" /> Frontend configuration is incomplete</p>
-        <p>For a local preview without AWS, run <code>npm run dev:demo</code> in <code>web/</code>.</p>
-        <p>To connect your existing backend, copy <code>.env.example</code> to <code>.env.local</code>, set the public API URL and Cognito identifiers, then restart Vite.</p>
-        <p>See <code>web/README.md</code> for setup instructions. No AWS access keys belong in the frontend.</p>
+        <p class="flex items-center gap-2 font-medium text-foreground">
+          <Settings2 class="size-4" aria-hidden="true" /> Frontend configuration is incomplete
+        </p>
+        <p>
+          For a local preview without AWS, run <code>npm run dev:demo</code> in <code>web/</code>.
+        </p>
+        <p>
+          To connect your existing backend, copy <code>.env.example</code> to
+          <code>.env.local</code>, set the public API URL and Cognito identifiers, then restart
+          Vite.
+        </p>
+        <p>
+          See <code>web/README.md</code> for setup instructions. No AWS access keys belong in the
+          frontend.
+        </p>
       </CardContent>
     </Card>
   </main>

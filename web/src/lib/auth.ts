@@ -7,7 +7,9 @@ import { cognitoUserPoolsTokenProvider } from 'aws-amplify/auth/cognito'
 import { sessionStorage } from 'aws-amplify/utils'
 
 export function createCognitoAuth(config: AppConfig): AuthService {
-  Amplify.configure({ Auth: { Cognito: { userPoolId: config.userPoolId, userPoolClientId: config.clientId } } })
+  Amplify.configure({
+    Auth: { Cognito: { userPoolId: config.userPoolId, userPoolClientId: config.clientId } },
+  })
   cognitoUserPoolsTokenProvider.setKeyValueStorage(sessionStorage)
   const user = shallowRef<User>()
   let epoch = 0
@@ -17,7 +19,8 @@ export function createCognitoAuth(config: AppConfig): AuthService {
       const session = await fetchAuthSession({ forceRefresh })
       if (currentEpoch !== epoch) throw new Error('Session changed. Please sign in again.')
       const idToken = session.tokens?.idToken
-      if (!idToken || typeof idToken.payload.sub !== 'string') throw new Error('Please sign in again.')
+      if (!idToken || typeof idToken.payload.sub !== 'string')
+        throw new Error('Please sign in again.')
       user.value = { id: idToken.payload.sub, email: String(idToken.payload.email ?? 'Account') }
       return idToken.toString()
     } catch (error) {
@@ -26,19 +29,40 @@ export function createCognitoAuth(config: AppConfig): AuthService {
     }
   }
   async function nextStep(result: Awaited<ReturnType<typeof signIn>>) {
-    if (result.isSignedIn) { await token(); return 'DONE' as const }
-    if (result.nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED') return 'NEW_PASSWORD' as const
-    throw new Error('This account requires an additional sign-in step. Contact your administrator, or restart sign-in.')
+    if (result.isSignedIn) {
+      await token()
+      return 'DONE' as const
+    }
+    if (result.nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED')
+      return 'NEW_PASSWORD' as const
+    throw new Error(
+      'This account requires an additional sign-in step. Contact your administrator, or restart sign-in.',
+    )
   }
   return {
-    user, token,
-    async restore() { try { await token() } catch { user.value = undefined } },
+    user,
+    token,
+    async restore() {
+      try {
+        await token()
+      } catch {
+        user.value = undefined
+      }
+    },
     async signIn(email, password) {
       epoch++
       user.value = undefined
-      return nextStep(await signIn({ username: email.trim(), password, options: { authFlowType: 'USER_SRP_AUTH' } }))
+      return nextStep(
+        await signIn({
+          username: email.trim(),
+          password,
+          options: { authFlowType: 'USER_SRP_AUTH' },
+        }),
+      )
     },
-    async confirmPassword(password) { return nextStep(await confirmSignIn({ challengeResponse: password })) },
+    async confirmPassword(password) {
+      return nextStep(await confirmSignIn({ challengeResponse: password }))
+    },
     async signOut() {
       epoch++
       user.value = undefined

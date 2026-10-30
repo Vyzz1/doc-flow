@@ -21,12 +21,12 @@ reloading removes them. The sample job is always available in demo.
 
 Copy `.env.example` to `.env.local` inside `web/` and replace its placeholders:
 
-| Public setting | Value |
-|---|---|
-| `VITE_API_BASE_URL` | Existing HTTP API URL, without a trailing `/jobs` |
-| `VITE_COGNITO_USER_POOL_ID` | Existing Cognito user pool ID |
-| `VITE_COGNITO_CLIENT_ID` | Existing app client ID (no client secret) |
-| `VITE_DEMO_MODE` | `false` for real mode |
+| Public setting              | Value                                             |
+| --------------------------- | ------------------------------------------------- |
+| `VITE_API_BASE_URL`         | Existing HTTP API URL, without a trailing `/jobs` |
+| `VITE_COGNITO_USER_POOL_ID` | Existing Cognito user pool ID                     |
+| `VITE_COGNITO_CLIENT_ID`    | Existing app client ID (no client secret)         |
+| `VITE_DEMO_MODE`            | `false` for real mode                             |
 
 Run `npm run dev`. Restart Vite after configuration changes. Incomplete
 configuration shows setup instructions rather than silently enabling demo.
@@ -60,7 +60,10 @@ results expire after 7 days.
 ## Checks
 
 ```sh
-npm run lint        # ESLint and TypeScript
+npm run lint        # Prettier check, ESLint (zero warnings), TypeScript
+npm run lint:fix    # fix ESLint issues and format with Prettier
+npm run format     # format frontend source/config/docs
+npm run format:check # check formatting without changes
 npm test            # Vitest, component tests and MSW-intercepted HTTP tests
 npm run build       # real static build, reads public configuration
 npm run build:demo  # static demo build
@@ -76,6 +79,10 @@ ignored `test-results/`. Tests prove local frontend behavior, not actual Cognito
 authentication, deployed CORS or real OCR output.
 
 Root `make lint test` includes the frontend; run `npm ci` here first.
+Root `make fmt` includes frontend formatting; `make fmt-web` formats only Vue.
+Prettier follows the repository's LF/two-space conventions; its ESLint config
+disables conflicting style rules. Generated output, lockfile and environment
+files are excluded. CI's existing frontend lint step also checks formatting.
 `make build-web` builds the real frontend; `make build` still builds Go Lambdas.
 CI checks both builds and runs demo browser checks before merge.
 
