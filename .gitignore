@@ -27,3 +27,6 @@ Thumbs.db
 # Copied in by `make image-context` so the OCR image's build context is
 # self-contained; the binary itself is build output.
 /build/ocr/bootstrap
+
+# Output of scripts/bench-dev.bash
+bench*.csv
