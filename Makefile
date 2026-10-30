@@ -2,18 +2,20 @@
 
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
+NPM ?= npm
 COMMANDS := create-job get-job starter validate recognize extract finish
 BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra
 
-.PHONY: help build image-context lint lint-go lint-infra fmt test test-int test-infra synth up down
+.PHONY: help build image-context lint lint-go lint-infra lint-web fmt fmt-web test test-web build-web test-int test-infra synth up down
 
 help:
 	@echo make build      - build Lambdas for linux/arm64 into bin/
-	@echo make lint       - check Go code and formatting, both modules
-	@echo make fmt        - format Go code and imports, both modules
-	@echo make test       - run unit tests
+	@echo make lint       - check Go modules and Vue frontend
+	@echo make fmt        - format Go modules and Vue frontend
+	@echo make test       - run Go and Vue unit tests
+	@echo make build-web  - build the static Vue frontend
 	@echo make test-int   - run integration tests against the local services
 	@echo make test-infra - run CDK assertion tests
 	@echo make up         - start DynamoDB Local and S3Mock
@@ -30,7 +32,16 @@ build: $(BINARIES)
 $(BINARIES): bin/%/bootstrap:
 	$(GO) build -trimpath -o $@ ./cmd/$*
 
-lint: lint-go lint-infra
+lint: lint-go lint-infra lint-web
+
+lint-web:
+	cd web && $(NPM) run lint
+
+test-web:
+	cd web && $(NPM) test
+
+build-web:
+	cd web && $(NPM) run build
 
 lint-go:
 	$(GOLANGCI_LINT) run ./...
@@ -42,11 +53,14 @@ lint-infra:
 	cd $(INFRA) && $(GOLANGCI_LINT) run ./...
 	cd $(INFRA) && $(GOLANGCI_LINT) fmt --diff ./...
 
-fmt:
+fmt-web:
+	cd web && $(NPM) run format
+
+fmt: fmt-web
 	$(GOLANGCI_LINT) fmt ./...
 	cd $(INFRA) && $(GOLANGCI_LINT) fmt ./...
 
-test:
+test: test-web
 	$(GO) test ./...
 
 # Separated from `test` because synthesizing runs the CDK's JavaScript in a

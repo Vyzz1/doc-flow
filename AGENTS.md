@@ -22,7 +22,7 @@ Client -> S3 (uploads/) -> S3 Event -> SQS -> Lambda starter -> Step Functions (
   Tesseract is the engine. A Textract fallback for low-confidence results is
   designed but not implemented, and stays gated by internal/quota when it is.
 Progress: GET /jobs/{id} polling (WebSocket API is a stretch goal)
-Dashboard: static React app on S3 + CloudFront
+Dashboard: static Vue 3 app (shadcn-vue, TanStack Vue Query) on S3 + CloudFront
 ```
 
 ## Hard constraints (read first)
@@ -45,6 +45,7 @@ Dashboard: static React app on S3 + CloudFront
 | Data | DynamoDB single-table design |
 | Orchestration | Step Functions Standard, SQS (+ DLQ) |
 | CI/CD | GitHub Actions (dev / prod environments) |
+| Frontend | Vue 3 + TypeScript + Vite, shadcn-vue, TanStack Vue Query (`web/`) |
 
 ## Repository layout
 
@@ -52,6 +53,7 @@ Dashboard: static React app on S3 + CloudFront
 infra/        CDK stacks (Go, a separate module)
 functions/    one directory per Lambda: create-job, starter, validate, thumbnail, ocr, extract, ...
 internal/     shared Go packages: model, store (DynamoDB repo), ocr, quota, logging
+web/          static Vue frontend, its own npm package
 docs/         architecture.md, ADRs, cost-analysis.md
 .github/      workflows
 ```

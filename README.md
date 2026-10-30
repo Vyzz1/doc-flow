@@ -4,7 +4,8 @@ A low-cost, serverless document-processing pipeline on AWS.
 
 Status: the backend is implemented and has been deployed to a dev stack, where
 `scripts/smoke-dev.bash` runs a document from upload to `DONE`. The dashboard
-(`web/`) is not started.
+in `web/` supports sign-in, uploads, progress and OCR results; see
+[frontend setup](web/README.md) for a local demo and backend configuration.
 
 ## Flow
 
@@ -44,7 +45,7 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 - `infra/`: the CDK app, a separate Go module holding the table, bucket,
   queues, Lambdas, workflow, HTTP API, and Cognito user pool.
 - `scripts/`: `smoke-dev.bash`, the end-to-end check against a deployed stack.
-- `web/` will be added when the dashboard starts.
+- `web/`: Vue 3 + TypeScript + Vite dashboard with shadcn-vue and TanStack Vue Query.
 
 `cmd/` holds executable entrypoints; `internal/` holds their reusable logic.
 
@@ -56,16 +57,17 @@ eleven stdlib advisories, in `net/http`, `net/textproto`, `crypto/tls`, `crypto/
 `net/url`, as reachable once the AWS SDK makes real HTTP calls; they are all
 fixed in 1.26.10. If `go build` reports `go.mod requires go >= 1.26.10`, install
 it or set `GOTOOLCHAIN=auto` to let Go fetch it. Install the linter using its [official installation instructions](https://golangci-lint.run/docs/welcome/install/local/).
-No external application dependencies are installed.
+The frontend also requires Node >=22.12 and `cd web && npm ci`.
 
 ```sh
-make lint test       # both Go modules
+make lint test       # lint both Go modules + frontend; test Go root + frontend
 make build           # linux/arm64 bootstrap binaries
 make test-int        # integration tests; starts the local services first
 make test-infra      # CDK assertion tests
 make synth           # synthesize the stack (builds the assets first; needs Docker)
 make up / make down  # DynamoDB Local and S3Mock
 make fmt
+make build-web       # static Vue build in web/dist/
 ```
 
 `make synth` needs Docker too: the recognition function is a container
@@ -90,8 +92,8 @@ executables at `bin/<command>/bootstrap` with cgo disabled; these are the
 Lambda handlers the stack deploys.
 
 Every package under `internal/` has table-driven unit tests against fakes,
-and `make test-infra` asserts on the synthesized template. Frontend lint
-waits for `web/`.
+and `make test-infra` asserts on the synthesized template. Frontend checks use
+ESLint, TypeScript, Vitest, local HTTP interception and Playwright.
 
 ## API
 
@@ -273,6 +275,7 @@ requests, Mondays at 02:00 UTC, and on demand:
 | `CDK lint, test, synth` | the infra module's lint and assertion tests, then a synth with the container image |
 | `Integration tests` | the `integration` build tag against DynamoDB Local and S3Mock |
 | `govulncheck` | `govulncheck ./...` |
+| `Vue lint, test, build` | lint/types, unit/component/HTTP tests, real build and demo browser checks |
 | `Merge` | squash-merges the pull request and deletes the branch |
 
 CI runs the same Make targets you run locally, so a green `make lint test build`
@@ -280,7 +283,7 @@ means a green build.
 
 ### Merge
 
-The merge job `needs` the other four, so it runs only when lint, test, build,
+The merge job `needs` the other five, so it runs only when backend/frontend lint, test, build,
 and the vulnerability scan have all passed. It merges pull requests opened by
 the repository owner, an organization member, or a collaborator, from a branch
 in this repository, that are not drafts. Bots, outside contributors, and forks
