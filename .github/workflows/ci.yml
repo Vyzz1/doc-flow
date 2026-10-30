@@ -24,8 +24,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides which areas a pull request touches, so a Vue change does not pay for
+  # the CDK synth and a Go change does not pay for Playwright. It asks the API
+  # for the file list instead of checking out, so no pull request code runs
+  # here. Anything that is not a pull request (a push to master, the weekly
+  # scan, a manual run) runs everything.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Filter by path
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A renamed file counts under both its names, so moving a file out
+          # of an area still triggers that area.
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          echo "Changed files:"
+          echo "$files"
+
+          # Go covers the Lambdas, the CDK app, the OCR image context, and the
+          # integration tests: infra synthesizes from the built binaries, so
+          # they cannot be told apart.
+          go_paths='^(cmd|internal|infra|build)/|^(go\.mod|go\.sum|Makefile|docker-compose\.yml|\.golangci\.yml)$'
+          web_paths='^web/|^Makefile$'
+          # The workflow file itself changes what both areas run.
+          if echo "$files" | grep -qx '.github/workflows/ci.yml'; then
+            go_paths='.'
+            web_paths='.'
+          fi
+
+          echo "go=$(echo "$files" | grep -qE "$go_paths" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "web=$(echo "$files" | grep -qE "$web_paths" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   go:
     name: Go lint, test, build
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -86,6 +138,8 @@ jobs:
 
   infra:
     name: CDK lint, test, synth
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -154,6 +208,8 @@ jobs:
 
   integration:
     name: Integration tests
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -183,6 +239,8 @@ jobs:
 
   govulncheck:
     name: govulncheck
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -208,6 +266,8 @@ jobs:
 
   web:
     name: Vue lint, test, build
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -229,9 +289,11 @@ jobs:
 
   merge:
     name: Merge
-    # Runs only when all validation jobs succeed, which is what makes this safe
-    # without branch protection.
-    needs: [go, infra, integration, govulncheck, web]
+    # Runs only when no validation job failed, which is what makes this safe
+    # without branch protection. A job skipped because its area did not change
+    # counts as passed; one that failed or was cancelled does not. Without the
+    # status function below, a single skipped job would skip the merge too.
+    needs: [changes, go, infra, integration, govulncheck, web]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -241,7 +303,10 @@ jobs:
     # pull_request trigger is safe here (GitHub withholds secrets from fork
     # runs).
     if: >-
-      github.event_name == 'pull_request'
+      !cancelled()
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+      && github.event_name == 'pull_request'
       && github.event.pull_request.draft == false
       && github.event.pull_request.user.type != 'Bot'
       && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
