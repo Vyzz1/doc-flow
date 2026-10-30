@@ -11,3 +11,6 @@
 *.pdf binary
 *.tif binary
 *.tiff binary
+
+# Exclude the frontend from GitHub language statistics.
+web/** linguist-detectable=false

@@ -6,6 +6,9 @@
 # Build and test output
 /bin/
 /dist/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
 coverage.out
 .cache/
 *.test
