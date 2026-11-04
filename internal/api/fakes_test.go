@@ -25,6 +25,13 @@ type fakeStore struct {
 	steps    []model.StepResult
 	result   model.DocumentResult
 	failures map[string]error
+
+	// What ListJobs returns, and the arguments it last received.
+	listed      []model.Job
+	nextToken   string
+	listedUser  string
+	listedLimit int32
+	listedToken string
 }
 
 func newFakeStore() *fakeStore {
@@ -51,8 +58,12 @@ func (f *fakeStore) GetJob(_ context.Context, _, _ string) (model.Job, error) {
 	return f.job, nil
 }
 
-func (f *fakeStore) ListJobs(context.Context, string, int32, string) ([]model.Job, string, error) {
-	return nil, "", f.failures["ListJobs"]
+func (f *fakeStore) ListJobs(_ context.Context, userID string, limit int32, token string) ([]model.Job, string, error) {
+	f.listedUser, f.listedLimit, f.listedToken = userID, limit, token
+	if err := f.failures["ListJobs"]; err != nil {
+		return nil, "", err
+	}
+	return f.listed, f.nextToken, nil
 }
 
 func (f *fakeStore) UpdateStatus(context.Context, string, string, model.JobStatus, model.JobStatus, time.Time) error {

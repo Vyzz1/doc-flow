@@ -36,6 +36,7 @@ flowchart TD
         gateway["HTTP API<br/>JWT authorizer"]
         createJob["create-job"]
         getJob["get-job"]
+        listJobs["list-jobs"]
     end
 
     cognito[("Cognito<br/>user pool")]
@@ -81,6 +82,9 @@ flowchart TD
     client -->|"GET /jobs/id, bearer token"| gateway
     gateway --> getJob
     getJob --> table
+    client -->|"GET /jobs, bearer token"| gateway
+    gateway --> listJobs
+    listJobs --> table
 ```
 
 Every state that can fail routes its failure to `MarkFailed`, `MarkDone`
