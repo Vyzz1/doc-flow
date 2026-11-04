@@ -129,6 +129,9 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	getJob := goFunction(stack, "GetJob", "get-job", props.Stage, assetRoot, map[string]*string{
 		"TABLE_NAME": table.TableName(),
 	})
+	listJobs := goFunction(stack, "ListJobs", "list-jobs", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME": table.TableName(),
+	})
 
 	// The workflow's steps. Only validate reads the uploaded object; finish
 	// only writes a status.
@@ -169,7 +172,7 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	workflow := newWorkflow(stack, validate, recognize, extract, finish, removalPolicy)
 
 	users := newIdentity(stack, props.Stage, removalPolicy)
-	api := newHttpApi(stack, users, createJob, getJob)
+	api := newHttpApi(stack, users, createJob, getJob, listJobs)
 
 	// A dead-letter queue the main queue gives up into, rather than
 	// redelivering a message that has already failed three times.
@@ -225,6 +228,12 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	}))
 	getJob.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions:   jsii.Strings("dynamodb:GetItem", "dynamodb:Query"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	// A listing reads the caller's partition and nothing else, so it gets the
+	// one verb.
+	listJobs.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:Query"),
 		Resources: &[]*string{table.TableArn()},
 	}))
 

@@ -9,14 +9,14 @@ import (
 	"github.com/aws/jsii-runtime-go"
 )
 
-// newHttpApi puts the two handlers behind an HTTP API whose every route
+// newHttpApi puts the handlers behind an HTTP API whose every route
 // requires a token this stack's user pool signed.
 //
 // An HTTP API rather than a REST API: it is about a third of the price, and
 // nothing here needs the features the REST flavour charges for. The JWT
 // authorizer is part of the gateway, so an unsigned request never reaches a
 // function and never costs an invocation.
-func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob awslambda.Function) awsapigatewayv2.HttpApi {
+func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob, listJobs awslambda.Function) awsapigatewayv2.HttpApi {
 	authorizer := awsapigatewayv2authorizers.NewHttpJwtAuthorizer(
 		jsii.String("JwtAuthorizer"),
 		users.issuer(stack),
@@ -48,6 +48,13 @@ func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob awslambda.
 		Methods: &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_POST},
 		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(
 			jsii.String("CreateJobIntegration"), createJob, nil),
+		Authorizer: authorizer,
+	})
+	api.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
+		Path:    jsii.String("/jobs"),
+		Methods: &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_GET},
+		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(
+			jsii.String("ListJobsIntegration"), listJobs, nil),
 		Authorizer: authorizer,
 	})
 	api.AddRoutes(&awsapigatewayv2.AddRoutesOptions{

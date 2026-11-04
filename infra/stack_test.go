@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "create asset root:", err)
 		os.Exit(1)
 	}
-	for _, command := range []string{"create-job", "get-job", "starter", "validate", "extract", "finish"} {
+	for _, command := range []string{"create-job", "get-job", "list-jobs", "starter", "validate", "extract", "finish"} {
 		dir := filepath.Join(root, command)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "create asset directory:", err)
@@ -201,13 +201,13 @@ func TestUploadBucket(t *testing.T) {
 func TestFunctions(t *testing.T) {
 	tpl := template(t, StageDev)
 
-	t.Run("runs both handlers on arm64 with the provided runtime", func(t *testing.T) {
+	t.Run("runs its handlers on arm64 with the provided runtime", func(t *testing.T) {
 		found := resources(t, tpl, "AWS::Lambda::Function")
-		// Six binary handlers, the recognition container, and two helpers
+		// Seven binary handlers, the recognition container, and two helpers
 		// CDK adds: the one that delivers bucket notifications and, in dev
 		// only, the one that empties the bucket on teardown.
-		if len(found) != 9 {
-			t.Fatalf("found %d functions, want 9", len(found))
+		if len(found) != 10 {
+			t.Fatalf("found %d functions, want 10", len(found))
 		}
 		handlers := 0
 		for _, fn := range found {
@@ -224,16 +224,16 @@ func TestFunctions(t *testing.T) {
 				t.Errorf("Handler = %v, want bootstrap", props["Handler"])
 			}
 		}
-		if handlers != 6 {
-			t.Errorf("found %d provided.al2023 handlers, want 6", handlers)
+		if handlers != 7 {
+			t.Errorf("found %d provided.al2023 handlers, want 7", handlers)
 		}
 	})
 
 	t.Run("expires its logs, which otherwise accrue forever", func(t *testing.T) {
 		groups := resources(t, tpl, "AWS::Logs::LogGroup")
 		// One per function this stack defines, plus the workflow's own.
-		if len(groups) != 8 {
-			t.Fatalf("found %d log groups, want 8", len(groups))
+		if len(groups) != 9 {
+			t.Fatalf("found %d log groups, want 9", len(groups))
 		}
 		for name, group := range groups {
 			if got := properties(t, group)["RetentionInDays"]; got != float64(7) {
@@ -344,6 +344,15 @@ func TestPermissions(t *testing.T) {
 		t.Error("no statement grants dynamodb:GetItem and dynamodb:Query")
 	})
 
+	t.Run("lets list-jobs query and nothing else", func(t *testing.T) {
+		for _, statement := range all {
+			if slices.Equal(asList(statement["Action"]), []string{"dynamodb:Query"}) {
+				return
+			}
+		}
+		t.Error("no statement grants dynamodb:Query alone")
+	})
+
 	// Reading a job and writing a step result is one role's work, so the
 	// pair is expected. What must never meet is the ability to read a
 	// customer's document and the ability to finish their job.
@@ -383,8 +392,8 @@ func TestStages(t *testing.T) {
 		wantFunctions int
 		wantLogLevel  string
 	}{
-		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 9, wantLogLevel: "debug"},
-		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 8, wantLogLevel: "info"},
+		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 10, wantLogLevel: "debug"},
+		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 9, wantLogLevel: "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -788,8 +797,8 @@ func TestApi(t *testing.T) {
 	// whatever user the token names.
 	t.Run("leaves no route open", func(t *testing.T) {
 		routes := resources(t, tpl, "AWS::ApiGatewayV2::Route")
-		if len(routes) != 2 {
-			t.Fatalf("found %d routes, want 2", len(routes))
+		if len(routes) != 3 {
+			t.Fatalf("found %d routes, want 3", len(routes))
 		}
 		for name, route := range routes {
 			props := properties(t, route)
@@ -802,7 +811,7 @@ func TestApi(t *testing.T) {
 		}
 	})
 
-	t.Run("exposes the two routes the handlers serve", func(t *testing.T) {
+	t.Run("exposes the routes the handlers serve", func(t *testing.T) {
 		var keys []string
 		for _, route := range resources(t, tpl, "AWS::ApiGatewayV2::Route") {
 			if key, ok := properties(t, route)["RouteKey"].(string); ok {
@@ -810,7 +819,7 @@ func TestApi(t *testing.T) {
 			}
 		}
 		slices.Sort(keys)
-		want := []string{"GET /jobs/{id}", "POST /jobs"}
+		want := []string{"GET /jobs", "GET /jobs/{id}", "POST /jobs"}
 		if !slices.Equal(keys, want) {
 			t.Errorf("routes = %v, want %v", keys, want)
 		}
