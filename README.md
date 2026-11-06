@@ -6,6 +6,8 @@ Status: the backend is implemented and has been deployed to a dev stack, where
 `scripts/smoke-dev.bash` runs a document from upload to `DONE`. The dashboard
 in `web/` supports sign-in, uploads, progress and OCR results; see
 [frontend setup](web/README.md) for a local demo and backend configuration.
+`scripts/bench-dev.bash` measures latency under load; results are in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Flow
 
@@ -19,7 +21,7 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 
 ## Layout
 
-- `cmd/`: the Lambdas. `create-job` and `get-job` serve the API; `starter`,
+- `cmd/`: the Lambdas. `create-job`, `get-job` and `list-jobs` serve the API; `starter`,
   `validate`, `recognize`, `extract`, and `finish` make up the processing
   workflow.
 - `internal/model`: domain types: `Job` and its status state machine,
@@ -157,6 +159,25 @@ document could not be processed.`, and one that exhausted its retries reads
 
 A malformed id is rejected before any read, so a bad path costs no capacity.
 
+### `GET /jobs`
+
+Returns a page of the caller's own jobs, newest first:
+
+```json
+{ "jobs": [{ "jobId": "...", "status": "DONE", "docType": "invoice",
+             "createdAt": "...", "updatedAt": "..." }],
+  "next": "01J8ZQJ9X7K3M4N5P6Q7R8S9TV" }
+```
+
+Each entry is a summary, with no steps or result: read `GET /jobs/{id}` for
+those. `limit` is a whole number from 1 to 50 and defaults to 20. `next` is
+set only when more jobs remain; send it back as the `next` query parameter
+for the following page. A `limit` or `next` that is not valid gets a 400.
+
+The query is bound to the caller's partition key, so no value of `next` can
+reach another user's jobs. A job created but never uploaded stays `PENDING`
+and is listed until its 7-day TTL removes it.
+
 ## Infrastructure
 
 `infra/` is a CDK app written in Go, in its own module so the CDK's large,
@@ -173,7 +194,7 @@ It currently creates:
 |---|---|
 | DynamoDB table | single table, on-demand, TTL on `expiresAt` |
 | S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
-| HTTP API | `POST /jobs` and `GET /jobs/{id}`, each naming the Cognito JWT authorizer |
+| HTTP API | `POST /jobs`, `GET /jobs` and `GET /jobs/{id}`, each naming the Cognito JWT authorizer |
 | Cognito user pool and app client | Lite plan, self sign-up off |
 | Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
 | `recognize` | arm64 container image from `build/ocr`, carrying Tesseract and poppler: 81 MB |
@@ -210,7 +231,8 @@ otherwise accrues on its own.
 IAM is written out statement by statement rather than taken from the CDK's
 `Grant*` helpers, which hand over more verbs than either function uses:
 `create-job` gets `dynamodb:PutItem` and `s3:PutObject` under `uploads/*`,
-`get-job` gets `dynamodb:GetItem` and `dynamodb:Query`. A test asserts the
+`get-job` gets `dynamodb:GetItem` and `dynamodb:Query`, and `list-jobs` gets
+`dynamodb:Query` alone. A test asserts the
 production template contains no wildcard action or resource, and another
 asserts the stack creates nothing that bills while idle.
 

@@ -3,7 +3,7 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 NPM ?= npm
-COMMANDS := create-job get-job starter validate recognize extract finish
+COMMANDS := create-job get-job list-jobs starter validate recognize extract finish
 BINARIES := $(addprefix bin/,$(addsuffix /bootstrap,$(COMMANDS)))
 
 INFRA := infra

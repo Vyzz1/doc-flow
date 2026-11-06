@@ -36,6 +36,7 @@ flowchart TD
         gateway["HTTP API<br/>JWT authorizer"]
         createJob["create-job"]
         getJob["get-job"]
+        listJobs["list-jobs"]
     end
 
     cognito[("Cognito<br/>user pool")]
@@ -81,6 +82,9 @@ flowchart TD
     client -->|"GET /jobs/id, bearer token"| gateway
     gateway --> getJob
     getJob --> table
+    client -->|"GET /jobs, bearer token"| gateway
+    gateway --> listJobs
+    listJobs --> table
 ```
 
 Every state that can fail routes its failure to `MarkFailed`, `MarkDone`
@@ -369,10 +373,13 @@ What it does not cover:
   differences are covered by assertions alone.
 - **Latency under load.** Over three runs the starter began one to two
   seconds after S3 stored the upload, so the event and the queue add little.
-  Those runs were single, spaced-out jobs; nothing has measured it with
-  several in flight.
-- **Load and cost.** Nothing has measured transitions or invocations per job
-  against the free tier.
+  One run of 100 single-page PNGs, 20 in flight, reached `DONE` every time
+  with a p95 of 3.9 seconds ([BENCHMARKS.md](BENCHMARKS.md)). That is one
+  sample of one small document: PDFs, larger images, and heavier load are
+  unmeasured, and the gap from the 12 seconds the smoke test saw is
+  unexplained.
+- **Cost.** Nothing has read transitions or invocations per job back from
+  AWS. The five transitions a job come from the state machine's definition.
 
 Step Functions Local was considered for the payload-shape question and
 turned down: AWS marks it unsupported, with no feature parity. The deployed
