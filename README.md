@@ -275,6 +275,12 @@ replaces at first sign-in, which the dashboard supports. `RESET=1` gives an
 existing account a new password. `DRY_RUN=1` only generates and checks a
 password. It needs AWS credentials and writes to the deployed pool.
 
+`scripts/delete-user.bash` removes one. It looks the user up, shows what it
+found, and asks you to type the email to confirm (`YES=1` skips that,
+`DRY_RUN=1` only looks). The account goes at once; their jobs and files expire
+on their own within 7 days, and a token already issued works until it expires,
+up to an hour. Delete their jobs from the dashboard first if they must go sooner.
+
 
 ## Smoke test
 
