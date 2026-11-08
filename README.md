@@ -259,6 +259,23 @@ asserts the stack creates nothing that bills while idle.
 tooling that never reaches a deployed artifact, and scanning it would report
 on code that does not ship.
 
+## Creating a user
+
+The user pool has self sign-up off and no email sender, so an administrator
+creates accounts. `scripts/create-user.bash` does it with a random password
+that meets the pool's policy (20 characters, with all four classes):
+
+```sh
+bash scripts/create-user.bash you@example.com
+```
+
+It prints the password once and stores it nowhere, and it never takes the
+password as an argument. `TEMPORARY=1` makes it a temporary password the person
+replaces at first sign-in, which the dashboard supports. `RESET=1` gives an
+existing account a new password. `DRY_RUN=1` only generates and checks a
+password. It needs AWS credentials and writes to the deployed pool.
+
+
 ## Smoke test
 
 `scripts/smoke-dev.bash` runs documents from upload to a terminal status
