@@ -21,6 +21,6 @@ export const doneJob: Job = {
     confidence: 0.96,
     pages: 1,
     text: '<script>alert("document")</script>',
-    fields: [{ name: 'invoice_number', value: 'INV-2026-042', confidence: 0.98 }],
+    fields: [{ name: 'invoiceNumber', value: 'INV-2026-042', confidence: 0.98 }],
   },
 }

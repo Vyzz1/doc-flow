@@ -3,21 +3,32 @@ import type { JobStatus, Step } from '@/lib/types'
 import { computed } from 'vue'
 import { Check, Minus, X } from '@lucide/vue'
 const props = defineProps<{ steps: Step[] | null; status: JobStatus }>()
+// The steps the pipeline records, in order. Rendering the pages and making the
+// thumbnail happen inside `ocr`, which is one workflow state, so they have no
+// rows of their own and their time is part of that step's. `extract` also
+// stores the result, which is why its time is more than the matching.
 const names = [
   ['validate', 'Validate document'],
-  ['preprocess', 'Prepare pages'],
-  ['thumbnail', 'Create thumbnail'],
-  ['ocr', 'Recognize text'],
+  ['ocr', 'Prepare and recognize text'],
   ['extract', 'Extract fields'],
-  ['save', 'Save results'],
 ]
-const rows = computed(() =>
-  names.map(([key, label]) => ({
+function humanize(key: string) {
+  const words = key.replace(/[-_]+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+// A step the API reports but this list does not know still gets a row, so a
+// step added to the backend shows up instead of silently vanishing.
+const rows = computed(() => {
+  const known = new Set(names.map(([key]) => key))
+  const extra = (props.steps ?? [])
+    .filter((step) => !known.has(step.step))
+    .map((step) => [step.step, humanize(step.step)])
+  return [...names, ...extra].map(([key, label]) => ({
     key,
     label,
     result: props.steps?.find((step) => step.step === key),
-  })),
-)
+  }))
+})
 </script>
 <template>
   <ol class="step-list" aria-label="Processing step outcomes">

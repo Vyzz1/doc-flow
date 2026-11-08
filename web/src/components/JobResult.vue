@@ -6,6 +6,14 @@ import { Button } from '@/components/ui/button'
 import { useCopy } from '@/composables/useCopy'
 defineProps<{ job: Job }>()
 const { copy, feedback } = useCopy()
+// The API names fields in camelCase (invoiceNumber, dateOfBirth). Underscores
+// are handled too, so a name from either style reads as words.
+function fieldLabel(name: string) {
+  return name
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+}
 function percent(value: number) {
   return `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`
 }
@@ -61,7 +69,9 @@ function percent(value: number) {
         <p class="mt-2 text-sm font-medium capitalize">{{ job.result.provider }}</p>
       </div>
     </div>
-    <Tabs default-value="fields" class="w-full">
+    <!-- An image is never given fields, so it opens on the text, which is the
+         only thing it has. -->
+    <Tabs :default-value="job.docType === 'image' ? 'text' : 'fields'" class="w-full">
       <TabsList class="mb-5"
         ><TabsTrigger value="fields">Extracted fields</TabsTrigger
         ><TabsTrigger value="text">Recognized text</TabsTrigger></TabsList
@@ -85,7 +95,7 @@ function percent(value: number) {
             <tbody class="divide-y divide-border">
               <tr v-for="field in job.result.fields" :key="field.name">
                 <th scope="row" class="px-4 py-4 font-medium capitalize">
-                  {{ field.name.replaceAll('_', ' ') }}
+                  {{ fieldLabel(field.name) }}
                 </th>
                 <td class="max-w-72 break-words px-4 py-4">{{ field.value }}</td>
                 <td class="px-4 py-4 text-right font-mono text-xs text-muted-foreground">
@@ -99,7 +109,14 @@ function percent(value: number) {
           v-else
           class="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"
         >
-          No structured fields were found. You can still review the recognized text.
+          <template v-if="job.docType === 'image'">
+            Images are read as text only. Upload the document as an invoice or an ID document to
+            extract fields.
+          </template>
+          <template v-else>
+            No labelled fields matched. Fields are found by English labels such as Invoice No or
+            Total. The recognized text is still available.
+          </template>
         </p>
       </TabsContent>
       <TabsContent value="text" class="space-y-3">
