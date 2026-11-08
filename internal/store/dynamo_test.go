@@ -31,6 +31,9 @@ type fakeAPI struct {
 	update *dynamodb.UpdateItemInput
 	query  *dynamodb.QueryInput
 
+	deletes    []*dynamodb.DeleteItemInput
+	deleteErrs map[int]error
+
 	getOut   *dynamodb.GetItemOutput
 	queryOut *dynamodb.QueryOutput
 
@@ -73,6 +76,20 @@ func (f *fakeAPI) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*d
 		return f.queryOut, nil
 	}
 	return &dynamodb.QueryOutput{}, nil
+}
+
+// DeleteItem records every call. deleteErrs fails the call at that index, so a
+// test can let the job's own delete succeed and fail a later one.
+func (f *fakeAPI) DeleteItem(_ context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+	index := len(f.deletes)
+	f.deletes = append(f.deletes, in)
+	if err := f.deleteErrs[index]; err != nil {
+		return nil, err
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &dynamodb.DeleteItemOutput{}, nil
 }
 
 func newTestStore(f *fakeAPI) *Store {

@@ -55,6 +55,11 @@ type JobStore interface {
 	// Pass the returned token back to continue; an empty token means the end.
 	ListJobs(ctx context.Context, userID string, limit int32, token string) ([]model.Job, string, error)
 
+	// DeleteJob removes a job and its step and result items. It fails with
+	// ErrJobNotFound when the user has no such job and with ErrStatusConflict
+	// when the job is still PROCESSING.
+	DeleteJob(ctx context.Context, userID, jobID string) error
+
 	// UpdateStatus moves a job from one status to another as a conditional
 	// write, so two workers racing cannot both win. Use FailJob for FAILED,
 	// which also records the reason.

@@ -25,6 +25,7 @@ type API interface {
 	GetItem(ctx context.Context, in *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 }
 
 // Store is the DynamoDB-backed JobStore.
@@ -212,18 +213,7 @@ func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string
 		":to":        &types.AttributeValueMemberS{Value: string(to)},
 		":updatedAt": &types.AttributeValueMemberS{Value: formatTime(now)},
 	}
-	// One source status compares directly; several become an IN list, which
-	// is how FailJob accepts both PENDING and PROCESSING in one write.
-	placeholders := make([]string, 0, len(from))
-	for i, status := range from {
-		name := fmt.Sprintf(":from%d", i)
-		placeholders = append(placeholders, name)
-		values[name] = &types.AttributeValueMemberS{Value: string(status)}
-	}
-	statusCondition := "#status = " + placeholders[0]
-	if len(placeholders) > 1 {
-		statusCondition = "#status IN (" + strings.Join(placeholders, ", ") + ")"
-	}
+	statusCondition := statusIn(from, values)
 	if reason != "" {
 		set = append(set, "#failureReason = :failureReason")
 		names["#failureReason"] = "failureReason"
@@ -255,6 +245,89 @@ func (s *Store) conditionalStatusWrite(ctx context.Context, userID, jobID string
 		return fmt.Errorf("update job %s to %s: %w", jobID, to, err)
 	}
 	return nil
+}
+
+// statusIn returns a condition on #status matching any of from, and adds the
+// values it names to values. One source status compares directly; several
+// become an IN list, which is how FailJob accepts both PENDING and PROCESSING
+// in one write.
+func statusIn(from []model.JobStatus, values map[string]types.AttributeValue) string {
+	placeholders := make([]string, 0, len(from))
+	for i, status := range from {
+		name := fmt.Sprintf(":from%d", i)
+		placeholders = append(placeholders, name)
+		values[name] = &types.AttributeValueMemberS{Value: string(status)}
+	}
+	if len(placeholders) == 1 {
+		return "#status = " + placeholders[0]
+	}
+	return "#status IN (" + strings.Join(placeholders, ", ") + ")"
+}
+
+// DeleteJob removes a job and everything stored under it.
+//
+// The job's own item goes first, as a conditional delete: that one write is
+// what refuses a job still being processed, and once it lands the job is gone
+// from every API. A failure while removing the step and result items then
+// leaves orphans for the TTL to collect, not a half-deleted job a client can
+// still see.
+func (s *Store) DeleteJob(ctx context.Context, userID, jobID string) error {
+	values := map[string]types.AttributeValue{}
+	condition := statusIn(model.DeletableFrom(), values)
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.table),
+		Key: map[string]types.AttributeValue{
+			pkAttr: &types.AttributeValueMemberS{Value: userPK(userID)},
+			skAttr: &types.AttributeValueMemberS{Value: jobSK(jobID)},
+		},
+		ConditionExpression:       aws.String("attribute_exists(#pk) AND " + condition),
+		ExpressionAttributeNames:  map[string]string{"#pk": pkAttr, "#status": statusAttr},
+		ExpressionAttributeValues: values,
+		// As in conditionalStatusWrite: the old item is what tells a missing
+		// job from one in the wrong status.
+		ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+	})
+	if err != nil {
+		if failed, ok := errors.AsType[*types.ConditionalCheckFailedException](err); ok {
+			if len(failed.Item) == 0 {
+				return fmt.Errorf("delete job %s: %w", jobID, ErrJobNotFound)
+			}
+			return fmt.Errorf("delete job %s: %w", jobID, ErrStatusConflict)
+		}
+		return fmt.Errorf("delete job %s: %w", jobID, err)
+	}
+
+	// The partition holds only this job's STEP# and RESULT items. Only the
+	// keys are read back, and the loop follows the pages because the result
+	// item can be large.
+	var start map[string]types.AttributeValue
+	for {
+		out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                aws.String(s.table),
+			KeyConditionExpression:   aws.String("#pk = :pk"),
+			ProjectionExpression:     aws.String("#pk, #sk"),
+			ExpressionAttributeNames: map[string]string{"#pk": pkAttr, "#sk": skAttr},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk": &types.AttributeValueMemberS{Value: jobPK(jobID)},
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return fmt.Errorf("list items of deleted job %s: %w", jobID, err)
+		}
+		for _, key := range out.Items {
+			if _, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: aws.String(s.table),
+				Key:       key,
+			}); err != nil {
+				return fmt.Errorf("delete item of job %s: %w", jobID, err)
+			}
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return nil
+		}
+		start = out.LastEvaluatedKey
+	}
 }
 
 // PutStepResult records one step's outcome.

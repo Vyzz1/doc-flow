@@ -322,3 +322,21 @@ func TestArtifactNamesAreDistinct(t *testing.T) {
 		names[name] = true
 	}
 }
+
+func TestDerivedPrefix(t *testing.T) {
+	prefix := DerivedPrefix("user-1", testJobID)
+
+	// A trailing slash is what keeps one job's prefix from matching another
+	// job whose id starts the same way.
+	if !strings.HasSuffix(prefix, "/") {
+		t.Errorf("DerivedPrefix = %q, want a trailing slash", prefix)
+	}
+	for _, name := range []string{ArtifactPage, ArtifactThumbnail, ArtifactText} {
+		if key := DerivedKey("user-1", testJobID, name); !strings.HasPrefix(key, prefix) {
+			t.Errorf("DerivedKey(%q) = %q is not under %q", name, key, prefix)
+		}
+	}
+	if strings.HasPrefix(UploadKey("user-1", testJobID), prefix) {
+		t.Errorf("the upload key is under the derived prefix %q", prefix)
+	}
+}

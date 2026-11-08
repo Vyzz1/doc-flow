@@ -80,6 +80,10 @@ func (f *fakeStore) ListJobs(context.Context, string, int32, string) ([]model.Jo
 	return nil, "", f.failures["ListJobs"]
 }
 
+func (f *fakeStore) DeleteJob(context.Context, string, string) error {
+	return f.failures["DeleteJob"]
+}
+
 func (f *fakeStore) UpdateStatus(_ context.Context, _, _ string, from, to model.JobStatus, _ time.Time) error {
 	f.statusCalls = append(f.statusCalls, statusCall{from: from, to: to})
 	return f.failures["UpdateStatus"]

@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "create asset root:", err)
 		os.Exit(1)
 	}
-	for _, command := range []string{"create-job", "get-job", "list-jobs", "starter", "validate", "extract", "finish"} {
+	for _, command := range []string{"create-job", "get-job", "list-jobs", "delete-job", "starter", "validate", "extract", "finish"} {
 		dir := filepath.Join(root, command)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "create asset directory:", err)
@@ -203,11 +203,11 @@ func TestFunctions(t *testing.T) {
 
 	t.Run("runs its handlers on arm64 with the provided runtime", func(t *testing.T) {
 		found := resources(t, tpl, "AWS::Lambda::Function")
-		// Seven binary handlers, the recognition container, and two helpers
+		// Eight binary handlers, the recognition container, and two helpers
 		// CDK adds: the one that delivers bucket notifications and, in dev
 		// only, the one that empties the bucket on teardown.
-		if len(found) != 10 {
-			t.Fatalf("found %d functions, want 10", len(found))
+		if len(found) != 11 {
+			t.Fatalf("found %d functions, want 11", len(found))
 		}
 		handlers := 0
 		for _, fn := range found {
@@ -224,16 +224,16 @@ func TestFunctions(t *testing.T) {
 				t.Errorf("Handler = %v, want bootstrap", props["Handler"])
 			}
 		}
-		if handlers != 7 {
-			t.Errorf("found %d provided.al2023 handlers, want 7", handlers)
+		if handlers != 8 {
+			t.Errorf("found %d provided.al2023 handlers, want 8", handlers)
 		}
 	})
 
 	t.Run("expires its logs, which otherwise accrue forever", func(t *testing.T) {
 		groups := resources(t, tpl, "AWS::Logs::LogGroup")
 		// One per function this stack defines, plus the workflow's own.
-		if len(groups) != 9 {
-			t.Fatalf("found %d log groups, want 9", len(groups))
+		if len(groups) != 10 {
+			t.Fatalf("found %d log groups, want 10", len(groups))
 		}
 		for name, group := range groups {
 			if got := properties(t, group)["RetentionInDays"]; got != float64(7) {
@@ -344,6 +344,34 @@ func TestPermissions(t *testing.T) {
 		t.Error("no statement grants dynamodb:GetItem and dynamodb:Query")
 	})
 
+	// Deleting must never read a document or touch a status, and listing the
+	// bucket must be pinned to the prefix that holds a job's artifacts.
+	t.Run("lets delete-job delete under its two prefixes and nothing more", func(t *testing.T) {
+		var deletes, lists int
+		for _, statement := range all {
+			actions := asList(statement["Action"])
+			resource := string(mustJSON(t, statement["Resource"]))
+			if slices.Contains(actions, "s3:DeleteObject") {
+				deletes++
+				if len(actions) != 1 || !strings.Contains(resource, "/uploads/*") || !strings.Contains(resource, "/derived/*") {
+					t.Errorf("delete statement = %v on %s, want s3:DeleteObject alone on uploads/* and derived/*", actions, resource)
+				}
+			}
+			if slices.Contains(actions, "s3:ListBucket") {
+				lists++
+				if !strings.Contains(string(mustJSON(t, statement["Condition"])), "derived/*") {
+					t.Errorf("s3:ListBucket is not limited to derived/*: %v", statement)
+				}
+			}
+			if slices.Contains(actions, "dynamodb:DeleteItem") && slices.Contains(actions, "dynamodb:UpdateItem") {
+				t.Errorf("one statement can both delete and update a job: %v", statement)
+			}
+		}
+		if deletes != 1 || lists != 1 {
+			t.Errorf("found %d s3:DeleteObject and %d s3:ListBucket statements, want one each", deletes, lists)
+		}
+	})
+
 	t.Run("lets list-jobs query and nothing else", func(t *testing.T) {
 		for _, statement := range all {
 			if slices.Equal(asList(statement["Action"]), []string{"dynamodb:Query"}) {
@@ -392,8 +420,8 @@ func TestStages(t *testing.T) {
 		wantFunctions int
 		wantLogLevel  string
 	}{
-		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 10, wantLogLevel: "debug"},
-		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 9, wantLogLevel: "info"},
+		{name: "dev throws its data away", stage: StageDev, wantPolicy: "Delete", wantFunctions: 11, wantLogLevel: "debug"},
+		{name: "prod keeps its data", stage: StageProd, wantPolicy: "Retain", wantFunctions: 10, wantLogLevel: "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -797,8 +825,8 @@ func TestApi(t *testing.T) {
 	// whatever user the token names.
 	t.Run("leaves no route open", func(t *testing.T) {
 		routes := resources(t, tpl, "AWS::ApiGatewayV2::Route")
-		if len(routes) != 3 {
-			t.Fatalf("found %d routes, want 3", len(routes))
+		if len(routes) != 4 {
+			t.Fatalf("found %d routes, want 4", len(routes))
 		}
 		for name, route := range routes {
 			props := properties(t, route)
@@ -819,7 +847,7 @@ func TestApi(t *testing.T) {
 			}
 		}
 		slices.Sort(keys)
-		want := []string{"GET /jobs", "GET /jobs/{id}", "POST /jobs"}
+		want := []string{"DELETE /jobs/{id}", "GET /jobs", "GET /jobs/{id}", "POST /jobs"}
 		if !slices.Equal(keys, want) {
 			t.Errorf("routes = %v, want %v", keys, want)
 		}

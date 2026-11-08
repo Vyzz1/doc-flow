@@ -132,6 +132,10 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	listJobs := goFunction(stack, "ListJobs", "list-jobs", props.Stage, assetRoot, map[string]*string{
 		"TABLE_NAME": table.TableName(),
 	})
+	deleteJob := goFunction(stack, "DeleteJob", "delete-job", props.Stage, assetRoot, map[string]*string{
+		"TABLE_NAME":    table.TableName(),
+		"UPLOAD_BUCKET": uploads.BucketName(),
+	})
 
 	// The workflow's steps. Only validate reads the uploaded object; finish
 	// only writes a status.
@@ -172,7 +176,7 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	workflow := newWorkflow(stack, validate, recognize, extract, finish, removalPolicy)
 
 	users := newIdentity(stack, props.Stage, removalPolicy)
-	api := newHttpApi(stack, users, createJob, getJob, listJobs)
+	api := newHttpApi(stack, users, createJob, getJob, listJobs, deleteJob)
 
 	// A dead-letter queue the main queue gives up into, rather than
 	// redelivering a message that has already failed three times.
@@ -235,6 +239,29 @@ func NewDocFlowStack(scope constructs.Construct, id string, props *DocFlowStackP
 	listJobs.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions:   jsii.Strings("dynamodb:Query"),
 		Resources: &[]*string{table.TableArn()},
+	}))
+
+	// Deleting removes the job's item, then its step and result items, which
+	// it finds with a Query for their keys. It never reads or writes a
+	// document: the only S3 verbs are the delete, under the two prefixes a job
+	// owns, and a listing of the derived one to find its artifacts.
+	deleteJob.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("dynamodb:DeleteItem", "dynamodb:Query"),
+		Resources: &[]*string{table.TableArn()},
+	}))
+	deleteJob.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: jsii.Strings("s3:DeleteObject"),
+		Resources: &[]*string{
+			uploads.ArnForObjects(jsii.String("uploads/*")),
+			uploads.ArnForObjects(jsii.String("derived/*")),
+		},
+	}))
+	deleteJob.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("s3:ListBucket"),
+		Resources: &[]*string{uploads.BucketArn()},
+		Conditions: &map[string]any{
+			"StringLike": map[string]any{"s3:prefix": []string{"derived/*"}},
+		},
 	}))
 
 	// The starter reads a job to check it exists, moves it to PROCESSING,

@@ -32,6 +32,9 @@ type fakeStore struct {
 	listedUser  string
 	listedLimit int32
 	listedToken string
+
+	// The user and job of every DeleteJob call, as "user/job".
+	deleted []string
 }
 
 func newFakeStore() *fakeStore {
@@ -64,6 +67,11 @@ func (f *fakeStore) ListJobs(_ context.Context, userID string, limit int32, toke
 		return nil, "", err
 	}
 	return f.listed, f.nextToken, nil
+}
+
+func (f *fakeStore) DeleteJob(_ context.Context, userID, jobID string) error {
+	f.deleted = append(f.deleted, userID+"/"+jobID)
+	return f.failures["DeleteJob"]
 }
 
 func (f *fakeStore) UpdateStatus(context.Context, string, string, model.JobStatus, model.JobStatus, time.Time) error {
@@ -123,6 +131,27 @@ func (f *fakeUploads) PresignUpload(_ context.Context, key, contentType string, 
 }
 
 var _ storage.Storage = (*fakeUploads)(nil)
+
+// fakeRemover records which keys and prefixes were deleted.
+type fakeRemover struct {
+	keys     []string
+	prefixes []string
+
+	keyErr    error
+	prefixErr error
+}
+
+func (f *fakeRemover) Delete(_ context.Context, key string) error {
+	f.keys = append(f.keys, key)
+	return f.keyErr
+}
+
+func (f *fakeRemover) DeletePrefix(_ context.Context, prefix string) error {
+	f.prefixes = append(f.prefixes, prefix)
+	return f.prefixErr
+}
+
+var _ storage.Remover = (*fakeRemover)(nil)
 
 // request builds an authenticated request carrying body.
 func request(sub, body string) Request {
