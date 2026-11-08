@@ -18,15 +18,25 @@ export interface DocumentResult {
   text: string
   fields: Field[] | null
 }
-export interface Job {
+export interface JobSummary {
   jobId: string
   status: JobStatus
   docType: DocumentType
   createdAt: string
   updatedAt: string
   failureReason?: string
+}
+export interface Job extends JobSummary {
   steps: Step[] | null
   result?: DocumentResult | null
+}
+export interface ListJobsOptions {
+  limit?: number
+  next?: string
+}
+export interface JobPage {
+  jobs: JobSummary[]
+  next?: string
 }
 export interface UploadTicket {
   jobId: string
@@ -40,6 +50,8 @@ export interface DocFlowApi {
   createJob(docType: DocumentType, contentType: string, signal?: AbortSignal): Promise<UploadTicket>
   upload(ticket: UploadTicket, file: File, signal?: AbortSignal): Promise<void>
   getJob(id: string, signal?: AbortSignal): Promise<Job>
+  listJobs(options?: ListJobsOptions, signal?: AbortSignal): Promise<JobPage>
+  deleteJob(id: string, signal?: AbortSignal): Promise<void>
 }
 export interface User {
   id: string

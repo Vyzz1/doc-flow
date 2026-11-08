@@ -13,6 +13,8 @@ describe('reactive job query', () => {
     let oldSignal: AbortSignal | undefined
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const api: DocFlowApi = {
+      listJobs: async () => ({ jobs: [] }),
+      deleteJob: async () => {},
       createJob: async () => {
         throw new Error('unused')
       },
@@ -44,6 +46,8 @@ describe('reactive job query', () => {
   it.each(['DONE', 'FAILED'] as const)('does not poll a %s job again', async (status) => {
     let reads = 0
     const api: DocFlowApi = {
+      listJobs: async () => ({ jobs: [] }),
+      deleteJob: async () => {},
       createJob: async () => {
         throw new Error('unused')
       },
@@ -81,6 +85,8 @@ describe('reactive job query', () => {
         setup() {
           useJob(
             {
+              listJobs: async () => ({ jobs: [] }),
+              deleteJob: async () => {},
               createJob: async () => {
                 throw new Error('unused')
               },

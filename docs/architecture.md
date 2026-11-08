@@ -18,7 +18,7 @@ the decisions that departed from them.
 | Upload queue, workflow starter, validation | implemented |
 | Recognition and field extraction | implemented |
 | HTTP API, Cognito authorizer | implemented |
-| Dashboard | Vue frontend implemented in `web/`; real AWS browser flow not yet verified |
+| Dashboard | Vue frontend in `web/` supports paginated list, delete, upload and results; real AWS browser flow not yet verified |
 
 The dev stack has run one image through the whole workflow to `DONE`; see
 [What is verified, and how](#what-is-verified-and-how) and

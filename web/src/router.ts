@@ -7,6 +7,7 @@ export function createAppRouter(runtime: Runtime) {
     routes: [
       { path: '/sign-in', component: () => import('./views/SignInView.vue') },
       { path: '/', component: () => import('./views/UploadView.vue') },
+      { path: '/jobs', component: () => import('./views/JobsView.vue') },
       { path: '/jobs/:id', component: () => import('./views/JobView.vue') },
       { path: '/:pathMatch(.*)*', redirect: '/' },
     ],

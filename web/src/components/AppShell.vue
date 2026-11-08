@@ -59,6 +59,12 @@ async function logout() {
             >＋</span
           >
         </RouterLink>
+        <RouterLink
+          to="/jobs"
+          :class="['nav-item', { active: route.path === '/jobs' }]"
+          @click="mobileMenu = false"
+          ><FileStack class="size-[18px]" aria-hidden="true" /> My documents</RouterLink
+        >
         <div v-if="route.path.startsWith('/jobs/')" class="nav-item active">
           <FileStack class="size-[18px]" aria-hidden="true" /> Document details
         </div>
@@ -94,7 +100,11 @@ async function logout() {
             aria-hidden="true"
           />
           <span class="truncate text-sm font-medium">{{
-            route.path === '/' ? 'New document' : 'Document details'
+            route.path === '/'
+              ? 'New document'
+              : route.path === '/jobs'
+                ? 'My documents'
+                : 'Document details'
           }}</span>
         </div>
         <div class="flex items-center gap-3">

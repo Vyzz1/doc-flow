@@ -26,13 +26,16 @@ import { allowedTypes, formatBytes, inspectFile, validJobId } from '@/lib/files'
 import type { DocumentType } from '@/lib/types'
 import { sampleJobId } from '@/lib/demo'
 
-const { api, config } = useRuntime()
+const { api, config, auth, queryClient } = useRuntime()
+const owner = auth.user.value?.id
 const router = useRouter()
 const { file, docType, ticket, error, pending, phase, submit, reset } = useUpload(api)
 const mutation = useMutation({
   mutationFn: submit,
   retry: false,
   onSuccess: (id) => {
+    if (auth.user.value?.id !== owner) return
+    if (ticket.value) void queryClient.invalidateQueries({ queryKey: ['jobs', owner] })
     if (id) void router.push(`/jobs/${id}`)
   },
 })

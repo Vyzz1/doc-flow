@@ -8,6 +8,8 @@ function fakeApi(overrides: Partial<DocFlowApi> = {}): DocFlowApi {
     createJob: async () => ticket,
     upload: async () => {},
     getJob: async () => doneJob,
+    listJobs: async () => ({ jobs: [] }),
+    deleteJob: async () => {},
     ...overrides,
   }
 }

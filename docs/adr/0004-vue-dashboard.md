@@ -46,3 +46,13 @@ or call AWS, and does not replace checking against deployed services.
 - Browser storage is accessible to JavaScript: render document content as text,
   never persist passwords, and include no secrets in the frontend build.
 - Live auth, upload and CORS checks require explicit authorization before release.
+
+## Update: job management
+
+With the backend list/delete endpoints available, the frontend now uses
+account-scoped cursor pagination for My documents and explicit confirmation for
+deletion from list/details. Processing jobs remain protected by the backend's
+409 response. Delete failures refresh cached lists, including the case where
+records were removed but file cleanup failed; the error stays visible. This
+supersedes the original lack of a listing endpoint noted above. No backend or
+infrastructure resources change in this frontend update.

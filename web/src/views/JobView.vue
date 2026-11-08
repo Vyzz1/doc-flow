@@ -1,24 +1,39 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { ArrowLeft, Copy, FileText, RefreshCw, CircleAlert, CheckCheck } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, Copy, FileText, RefreshCw, CircleAlert, CheckCheck, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import StatusBadge from '@/components/StatusBadge.vue'
 import StepTimeline from '@/components/StepTimeline.vue'
 import JobResult from '@/components/JobResult.vue'
+import DeleteJobDialog from '@/components/DeleteJobDialog.vue'
 import { useRuntime } from '@/runtime'
 import { useJob } from '@/composables/useJob'
 import { useCopy } from '@/composables/useCopy'
-import { errorMessage } from '@/lib/api'
+import { ApiError, errorMessage } from '@/lib/api'
 import { validJobId } from '@/lib/files'
+import type { JobSummary } from '@/lib/types'
+import type { DeleteOutcome } from '@/composables/useDeleteJob'
 
 const { api, auth } = useRuntime()
 const route = useRoute()
+const router = useRouter()
 const id = computed(() => String(route.params.id ?? ''))
 const subject = computed(() => auth.user.value?.id)
-const { data: job, isPending, isFetching, error, refetch } = useJob(api, subject, id)
+const { data: receivedJob, isPending, isFetching, error, refetch } = useJob(api, subject, id)
+const job = computed(() =>
+  error.value instanceof ApiError && error.value.status === 404 ? undefined : receivedJob.value,
+)
+const selected = ref<JobSummary>()
+function deleted(outcome: DeleteOutcome) {
+  selected.value = undefined
+  void router.replace({
+    path: '/jobs',
+    query: { deleted: outcome.alreadyMissing ? 'missing' : '1' },
+  })
+}
 const { copy, feedback } = useCopy()
 const labels = { invoice: 'Invoice', id_document: 'ID document', image: 'Image' }
 function date(value: string) {
@@ -28,9 +43,9 @@ function date(value: string) {
 
 <template>
   <RouterLink
-    to="/"
+    to="/jobs"
     class="mb-7 inline-flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-primary"
-    ><ArrowLeft class="size-3.5" aria-hidden="true" /> Back to workspace</RouterLink
+    ><ArrowLeft class="size-3.5" aria-hidden="true" /> Back to documents</RouterLink
   >
   <section class="page-intro flex flex-wrap items-end justify-between gap-5">
     <div>
@@ -46,14 +61,30 @@ function date(value: string) {
         }}
       </p>
     </div>
-    <Button variant="outline" :disabled="isFetching || !validJobId(id)" @click="refetch()"
-      ><RefreshCw
-        class="size-3.5"
-        :class="{ 'motion-safe:animate-spin': isFetching }"
-        aria-hidden="true"
-      />
-      Refresh</Button
-    >
+    <div class="flex flex-wrap gap-3">
+      <Button
+        v-if="job"
+        variant="outline"
+        class="text-destructive hover:bg-red-50 hover:text-destructive"
+        :disabled="job.status === 'PROCESSING'"
+        :title="
+          job.status === 'PROCESSING'
+            ? 'Wait until processing finishes before deleting.'
+            : undefined
+        "
+        aria-label="Delete document"
+        @click="selected = job"
+        ><Trash2 class="size-3.5" aria-hidden="true" /> Delete document</Button
+      >
+      <Button variant="outline" :disabled="isFetching || !validJobId(id)" @click="refetch()"
+        ><RefreshCw
+          class="size-3.5"
+          :class="{ 'motion-safe:animate-spin': isFetching }"
+          aria-hidden="true"
+        />
+        Refresh</Button
+      >
+    </div>
   </section>
   <div v-if="!validJobId(id)" role="alert" class="error-notice">
     This job ID is invalid. Return to the workspace and enter a valid 26-character ID.
@@ -138,4 +169,5 @@ function date(value: string) {
       ></Card>
     </div>
   </template>
+  <DeleteJobDialog :job="selected" @close="selected = undefined" @deleted="deleted" />
 </template>

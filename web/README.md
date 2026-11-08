@@ -15,7 +15,8 @@ Open the printed local URL and choose **Explore demo workspace**. Upload any
 supported file or choose **View a sample result**. Demo uploads do not leave
 the browser and are not actually OCRed: all results are labeled samples.
 New demo jobs complete in approximately 9 seconds and exist only in memory;
-reloading removes them. The sample job is always available in demo.
+reloading removes them and restores the initial sample. Demo jobs can be listed
+and deleted just like real jobs; processing jobs refuse deletion.
 
 ## Connect the existing backend
 
@@ -53,9 +54,18 @@ retry: a failed upload retains its job ID and permits explicitly retrying the
 same file/ticket until expiry. The 10 MiB limit and document MIME rules match
 the backend; the server still validates bytes.
 
-There is no job-list API. Save the job ID or hash-route URL to return to a job.
-The UI shows no fabricated history or private S3 artifact URLs. Documents and
-results expire after 7 days.
+**My documents** lists your jobs newest first via `GET /jobs`, with 20 entries
+per page and **Load more** following the server's `next` cursor. Use **Refresh**
+to update statuses; the list does not poll in the background. You can still open
+a job by its ID or hash-route URL. Documents and results expire after 7 days.
+
+Delete a job from the list or detail page after confirming the permanent action.
+`DELETE /jobs/{id}` removes records and files; processing jobs cannot be deleted.
+Deletion never retries automatically. A 404 is treated as already removed; a
+409 keeps the job and asks you to wait. A 500 can mean records were removed but
+files remain until expiry: the UI preserves that backend explanation and
+refreshes the list instead of reporting a false success. Cache entries are
+scoped to your account and refreshed after uploads and deletion attempts.
 
 ## Checks
 
@@ -73,7 +83,8 @@ npm run test:e2e    # build demo, serve, test headless Chromium, then stop
 
 To use installed Chrome instead of downloading Chromium, set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its absolute executable path. Browser
-checks cover desktop/mobile, file selection, job completion, tabs and sign-out,
+checks cover desktop/mobile, file selection, job completion, tabs, document
+listing, confirmed deletion from list/details, cancellation and sign-out,
 and assert demo makes no external requests. Screenshots/failure traces go under
 ignored `test-results/`. Tests prove local frontend behavior, not actual Cognito
 authentication, deployed CORS or real OCR output.

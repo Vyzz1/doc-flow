@@ -11,6 +11,63 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('real HTTP adapter with local interception', () => {
+  it('lists the next page with the backend query names and authentication', async () => {
+    server.use(
+      http.get('https://api.example.test/jobs', ({ request }) => {
+        const url = new URL(request.url)
+        expect(url.searchParams.get('limit')).toBe('20')
+        expect(url.searchParams.get('next')).toBe(jobId)
+        expect(request.headers.get('authorization')).toBe('Bearer id-token')
+        return HttpResponse.json({ jobs: [doneJob], next: jobId })
+      }),
+    )
+    const api = createApi('https://api.example.test', async () => 'id-token')
+    expect(await api.listJobs({ limit: 20, next: jobId })).toMatchObject({
+      jobs: [{ jobId }],
+      next: jobId,
+    })
+  })
+  it('accepts an empty 204 when deleting without attempting to parse JSON', async () => {
+    server.use(
+      http.delete(`https://api.example.test/jobs/${jobId}`, ({ request }) => {
+        expect(request.headers.get('authorization')).toBe('Bearer id-token')
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    await expect(
+      createApi('https://api.example.test', async () => 'id-token').deleteJob(jobId),
+    ).resolves.toBeUndefined()
+  })
+  it('preserves the backend explanation when a delete has partially succeeded', async () => {
+    const explanation =
+      'the job was deleted, but its files could not be removed; they expire on their own'
+    server.use(
+      http.delete(`https://api.example.test/jobs/${jobId}`, () =>
+        HttpResponse.json({ error: explanation }, { status: 500 }),
+      ),
+    )
+    await expect(
+      createApi('https://api.example.test', async () => 'token').deleteJob(jobId),
+    ).rejects.toMatchObject({ status: 500, message: explanation })
+  })
+  it('does not retry a processing conflict and keeps its message', async () => {
+    let requests = 0
+    server.use(
+      http.delete(`https://api.example.test/jobs/${jobId}`, () => {
+        requests++
+        return HttpResponse.json({ error: 'the job is still being processed' }, { status: 409 })
+      }),
+    )
+    await expect(
+      createApi('https://api.example.test', async () => 'token').deleteJob(jobId),
+    ).rejects.toMatchObject({ status: 409, message: 'the job is still being processed' })
+    expect(requests).toBe(1)
+  })
+  it('rejects a malformed delete ID before sending it to AWS', async () => {
+    await expect(
+      createApi('https://api.example.test', async () => 'token').deleteJob('../other'),
+    ).rejects.toMatchObject({ status: 400 })
+  })
   it('serializes create-job and attaches the ID token only to the API', async () => {
     server.use(
       http.post('https://api.example.test/jobs', async ({ request }) => {

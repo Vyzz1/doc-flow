@@ -4,7 +4,7 @@ A low-cost, serverless document-processing pipeline on AWS.
 
 Status: the backend is implemented and has been deployed to a dev stack, where
 `scripts/smoke-dev.bash` runs a document from upload to `DONE`. The dashboard
-in `web/` supports sign-in, uploads, progress and OCR results; see
+in `web/` supports sign-in, uploads, paginated job history, deletion, progress and OCR results; see
 [frontend setup](web/README.md) for a local demo and backend configuration.
 `scripts/bench-dev.bash` measures latency under load; results are in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md).

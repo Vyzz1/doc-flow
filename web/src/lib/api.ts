@@ -1,4 +1,4 @@
-import type { DocFlowApi, Job, UploadTicket } from './types'
+import type { DocFlowApi, Job, JobPage, UploadTicket } from './types'
 import { validJobId } from './files'
 
 export class ApiError extends Error {
@@ -44,7 +44,11 @@ async function timedFetch(url: string, init: RequestInit, signal?: AbortSignal):
   }
 }
 
-async function responseError(response: Response, upload = false): Promise<ApiError> {
+async function responseError(
+  response: Response,
+  upload = false,
+  exposeServerError = false,
+): Promise<ApiError> {
   const defaults: Record<number, string> = {
     401: 'Your session has expired. Please sign in again.',
     403: 'You do not have permission to access this resource.',
@@ -54,7 +58,7 @@ async function responseError(response: Response, upload = false): Promise<ApiErr
   let message = upload
     ? 'Upload failed. Check your connection and retry the upload.'
     : (defaults[response.status] ?? 'The service is temporarily unavailable. Please try again.')
-  if (!upload && response.status < 500) {
+  if (!upload && (response.status < 500 || exposeServerError)) {
     try {
       const body = (await response.json()) as { message?: string; error?: string }
       if (typeof body.message === 'string') message = body.message
@@ -71,7 +75,12 @@ export function createApi(
   token: (refresh?: boolean) => Promise<string>,
   unauthorized?: () => void,
 ): DocFlowApi {
-  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
+  async function request<T>(
+    path: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+    exposeServerError = false,
+  ): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let idToken: string
       try {
@@ -92,13 +101,33 @@ export function createApi(
       if (response.status === 401 && attempt === 0) continue
       if (!response.ok) {
         if (response.status === 401) unauthorized?.()
-        throw await responseError(response)
+        throw await responseError(response, false, exposeServerError)
       }
+      if (response.status === 204) return undefined as T
       return (await response.json()) as T
     }
     throw new ApiError(401, 'Please sign in again.')
   }
   return {
+    listJobs(options = {}, signal) {
+      const limit = options.limit ?? 20
+      if (
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 50 ||
+        (options.next && !validJobId(options.next))
+      ) {
+        return Promise.reject(new ApiError(400, 'Invalid page size or job cursor.'))
+      }
+      const params = new URLSearchParams({ limit: String(limit) })
+      if (options.next) params.set('next', options.next)
+      return request<JobPage>(`/jobs?${params}`, { method: 'GET' }, signal)
+    },
+    deleteJob(id, signal) {
+      if (!validJobId(id))
+        return Promise.reject(new ApiError(400, 'Enter a valid 26-character job ID.'))
+      return request<void>(`/jobs/${id}`, { method: 'DELETE' }, signal, true)
+    },
     createJob(docType, contentType, signal) {
       return request<UploadTicket>(
         '/jobs',

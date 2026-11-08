@@ -42,7 +42,9 @@ async function submit() {
     const redirect = route.query.redirect
     const safe =
       typeof redirect === 'string' &&
-      (redirect === '/' || /^\/jobs\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(redirect))
+      (redirect === '/' ||
+        redirect === '/jobs' ||
+        /^\/jobs\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(redirect))
         ? redirect
         : '/'
     await router.replace(safe)

@@ -58,10 +58,19 @@ function newId(): string {
 export function createDemo() {
   const user = shallowRef<User>()
   const records = new Map<string, { type: DocumentType; created: number; uploaded?: number }>()
+  function seedSample() {
+    records.set(sampleJobId, {
+      type: 'invoice',
+      created: Date.now() - 15000,
+      uploaded: Date.now() - 15000,
+    })
+  }
+  seedSample()
   const auth: AuthService = {
     user,
     async restore() {},
     async signIn() {
+      if (!records.size) seedSample()
       user.value = { id: 'demo-user', email: 'alex@demo.docflow' }
       return 'DONE'
     },
@@ -77,6 +86,43 @@ export function createDemo() {
     },
   }
   const api: DocFlowApi = {
+    async listJobs(options = {}, signal) {
+      signal?.throwIfAborted()
+      const limit = options.limit ?? 20
+      if (
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 50 ||
+        (options.next && !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(options.next))
+      ) {
+        throw new ApiError(400, 'Invalid page size or job cursor.')
+      }
+      const ids = [...records.keys()]
+        .sort()
+        .reverse()
+        .filter((id) => !options.next || id < options.next)
+      const selected = ids.slice(0, limit)
+      const jobs = await Promise.all(
+        selected.map(async (id) => {
+          const job = await api.getJob(id, signal)
+          return {
+            jobId: job.jobId,
+            status: job.status,
+            docType: job.docType,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+            failureReason: job.failureReason,
+          }
+        }),
+      )
+      return { jobs, next: ids.length > limit ? selected.at(-1) : undefined }
+    },
+    async deleteJob(id, signal) {
+      signal?.throwIfAborted()
+      const job = await api.getJob(id, signal)
+      if (job.status === 'PROCESSING') throw new ApiError(409, 'the job is still being processed')
+      records.delete(id)
+    },
     async createJob(docType) {
       const jobId = newId()
       records.set(jobId, { type: docType, created: Date.now() })
@@ -97,10 +143,7 @@ export function createDemo() {
     },
     async getJob(jobId, signal) {
       signal?.throwIfAborted()
-      const record =
-        jobId === sampleJobId
-          ? { type: 'invoice' as const, created: Date.now() - 15000, uploaded: Date.now() - 15000 }
-          : records.get(jobId)
+      const record = records.get(jobId)
       if (!record)
         throw new ApiError(404, 'Job not found. Demo jobs exist only in this page session.')
       const elapsed = record.uploaded ? Date.now() - record.uploaded : 0
@@ -110,7 +153,9 @@ export function createDemo() {
         status,
         docType: record.type,
         createdAt: new Date(record.created).toISOString(),
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date(
+          record.uploaded ? Math.min(Date.now(), record.uploaded + 9000) : record.created,
+        ).toISOString(),
         steps: status === 'DONE' ? steps : steps.slice(0, Math.floor(elapsed / 1500)),
         result: status === 'DONE' ? result(record.type) : undefined,
       }
