@@ -3,13 +3,12 @@ import { ApiError } from './api'
 import type { AuthService, DocFlowApi, DocumentType, Job, Step, User } from './types'
 
 export const sampleJobId = '01J8ZQJ9X7K3M4N5P6Q7R8S9TV'
+// The three steps the backend records. Rendering and the thumbnail are inside
+// `ocr`, so its time covers them.
 const steps: Step[] = [
   { step: 'validate', status: 'SUCCEEDED', durationMs: 180 },
-  { step: 'preprocess', status: 'SUCCEEDED', durationMs: 820 },
-  { step: 'thumbnail', status: 'SUCCEEDED', durationMs: 120 },
-  { step: 'ocr', status: 'SUCCEEDED', durationMs: 2350 },
+  { step: 'ocr', status: 'SUCCEEDED', durationMs: 3290 },
   { step: 'extract', status: 'SUCCEEDED', durationMs: 95 },
-  { step: 'save', status: 'SUCCEEDED', durationMs: 45 },
 ]
 function result(docType: DocumentType): Job['result'] {
   if (docType === 'invoice')
@@ -19,8 +18,8 @@ function result(docType: DocumentType): Job['result'] {
       confidence: 0.967,
       text: 'NORTHSTAR STUDIO\nINVOICE INV-2026-042\nDate: October 30, 2026\nBill to: Acme Design Co.\n\nDesign services     $1,200.00\nConsulting           $350.00\nSubtotal           $1,550.00\nTax (10%)            $155.00\nTOTAL              $1,705.00\n\nThank you for your business.',
       fields: [
-        { name: 'invoice_number', value: 'INV-2026-042', confidence: 0.99 },
-        { name: 'date', value: '2026-10-30', confidence: 0.97 },
+        { name: 'invoiceNumber', value: 'INV-2026-042', confidence: 0.99 },
+        { name: 'invoiceDate', value: '2026-10-30', confidence: 0.97 },
         { name: 'total', value: '1705.00', confidence: 0.96 },
         { name: 'currency', value: 'USD', confidence: 0.99 },
       ],
@@ -37,8 +36,8 @@ function result(docType: DocumentType): Job['result'] {
       docType === 'image'
         ? []
         : [
-            { name: 'name', value: 'Alex Morgan', confidence: 0.95 },
-            { name: 'document_number', value: 'SAMPLE-123456', confidence: 0.93 },
+            { name: 'fullName', value: 'Alex Morgan', confidence: 0.95 },
+            { name: 'documentNumber', value: 'SAMPLE-123456', confidence: 0.93 },
           ],
   }
 }
@@ -156,7 +155,7 @@ export function createDemo() {
         updatedAt: new Date(
           record.uploaded ? Math.min(Date.now(), record.uploaded + 9000) : record.created,
         ).toISOString(),
-        steps: status === 'DONE' ? steps : steps.slice(0, Math.floor(elapsed / 1500)),
+        steps: status === 'DONE' ? steps : steps.slice(0, Math.floor(elapsed / 3000)),
         result: status === 'DONE' ? result(record.type) : undefined,
       }
     },
