@@ -21,7 +21,7 @@ quota. [docs/architecture.md](docs/architecture.md) describes how the pieces fit
 
 ## Layout
 
-- `cmd/`: the Lambdas. `create-job`, `get-job` and `list-jobs` serve the API; `starter`,
+- `cmd/`: the Lambdas. `create-job`, `get-job`, `list-jobs` and `delete-job` serve the API; `starter`,
   `validate`, `recognize`, `extract`, and `finish` make up the processing
   workflow.
 - `internal/model`: domain types: `Job` and its status state machine,
@@ -178,6 +178,24 @@ The query is bound to the caller's partition key, so no value of `next` can
 reach another user's jobs. A job created but never uploaded stays `PENDING`
 and is listed until its 7-day TTL removes it.
 
+### `DELETE /jobs/{id}`
+
+Deletes a job, its step and result records, its uploaded document, and the
+renditions derived from it. It answers `204` with no body. There is no undo.
+
+- A job that is `PROCESSING` is refused with `409`: the workflow is still
+  writing the records a delete would remove. Wait for `DONE` or `FAILED`.
+- Another user's id, or an id that does not exist, is `404`, as with
+  `GET /jobs/{id}`. A malformed id is `400`.
+- A `PENDING` job can be deleted. If its upload arrives afterwards the
+  starter finds no job and discards the message; the file itself is left for
+  the bucket's 7-day expiry.
+- The job's own record is deleted first, in one conditional write, and that is
+  what refuses a job in progress. If removing the files then fails, the job is
+  already gone from the API, the response is `500` saying so, and the bucket's
+  expiry and the table's TTL collect what is left. Repeating the request
+  returns `404`.
+
 ## Infrastructure
 
 `infra/` is a CDK app written in Go, in its own module so the CDK's large,
@@ -194,7 +212,7 @@ It currently creates:
 |---|---|
 | DynamoDB table | single table, on-demand, TTL on `expiresAt` |
 | S3 upload bucket | private, SSE, TLS enforced, 7-day expiry, CORS for the presigned POST |
-| HTTP API | `POST /jobs`, `GET /jobs` and `GET /jobs/{id}`, each naming the Cognito JWT authorizer |
+| HTTP API | `POST /jobs`, `GET /jobs`, `GET /jobs/{id}` and `DELETE /jobs/{id}`, each naming the Cognito JWT authorizer |
 | Cognito user pool and app client | Lite plan, self sign-up off |
 | Lambdas | arm64, `provided.al2023`, from `bin/<command>` |
 | `recognize` | arm64 container image from `build/ocr`, carrying Tesseract and poppler: 81 MB |
@@ -232,7 +250,8 @@ IAM is written out statement by statement rather than taken from the CDK's
 `Grant*` helpers, which hand over more verbs than either function uses:
 `create-job` gets `dynamodb:PutItem` and `s3:PutObject` under `uploads/*`,
 `get-job` gets `dynamodb:GetItem` and `dynamodb:Query`, and `list-jobs` gets
-`dynamodb:Query` alone. A test asserts the
+`dynamodb:Query` alone, and `delete-job` gets `dynamodb:DeleteItem` and
+`dynamodb:Query` plus `s3:DeleteObject` under `uploads/*` and `derived/*`. A test asserts the
 production template contains no wildcard action or resource, and another
 asserts the stack creates nothing that bills while idle.
 

@@ -55,6 +55,18 @@ type Documents interface {
 	Read(ctx context.Context, key string) ([]byte, error)
 }
 
+// Remover deletes a job's objects. It is separate from the others for the same
+// reason: the one function that deletes holds the one role that can.
+type Remover interface {
+	// Delete removes one object. A key that holds nothing is not an error.
+	Delete(ctx context.Context, key string) error
+
+	// DeletePrefix removes every object whose key starts with prefix. The
+	// prefix must end in a slash and name something under the bucket's root,
+	// so a bug upstream cannot empty the bucket.
+	DeletePrefix(ctx context.Context, prefix string) error
+}
+
 // Artifacts writes what the pipeline derives from an upload. It is separate
 // from Documents because only one step writes, and its role says so.
 type Artifacts interface {

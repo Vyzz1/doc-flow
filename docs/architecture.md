@@ -37,6 +37,7 @@ flowchart TD
         createJob["create-job"]
         getJob["get-job"]
         listJobs["list-jobs"]
+        deleteJob["delete-job"]
     end
 
     cognito[("Cognito<br/>user pool")]
@@ -85,6 +86,10 @@ flowchart TD
     client -->|"GET /jobs, bearer token"| gateway
     gateway --> listJobs
     listJobs --> table
+    client -->|"DELETE /jobs/id, bearer token"| gateway
+    gateway --> deleteJob
+    deleteJob --> table
+    deleteJob --> bucket
 ```
 
 Every state that can fail routes its failure to `MarkFailed`, `MarkDone`

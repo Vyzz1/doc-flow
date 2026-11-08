@@ -125,6 +125,13 @@ func DerivedKey(userID, jobID, name string) string {
 	return "derived/" + userID + "/" + jobID + "/" + name
 }
 
+// DerivedPrefix returns the prefix every artifact derived from a job's upload
+// lives under, with the trailing slash that keeps one job's id from matching
+// another's.
+func DerivedPrefix(userID, jobID string) string {
+	return "derived/" + userID + "/" + jobID + "/"
+}
+
 // Validate reports whether j is internally consistent. Use it before writing a
 // job and after reading one back, so a malformed item fails at the boundary
 // rather than deeper in the workflow.

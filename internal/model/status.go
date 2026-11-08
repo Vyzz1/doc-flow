@@ -49,6 +49,13 @@ func FailableFrom() []JobStatus {
 	return []JobStatus{StatusPending, StatusProcessing}
 }
 
+// DeletableFrom lists the statuses a job may be deleted in. PROCESSING is left
+// out: the workflow is still writing the step and result items a delete would
+// remove. Deleting is not a transition, so the state machine is unchanged.
+func DeletableFrom() []JobStatus {
+	return []JobStatus{StatusPending, StatusDone, StatusFailed}
+}
+
 // Valid reports whether s is one of the known statuses.
 func (s JobStatus) Valid() bool {
 	_, ok := allowedTransitions[s]
