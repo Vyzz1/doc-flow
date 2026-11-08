@@ -95,3 +95,17 @@ func TestFailableFrom(t *testing.T) {
 		}
 	}
 }
+
+func TestDeletableFrom(t *testing.T) {
+	deletable := map[JobStatus]bool{}
+	for _, s := range DeletableFrom() {
+		deletable[s] = true
+	}
+	// Only a job the workflow is not writing to may go.
+	want := map[JobStatus]bool{StatusPending: true, StatusProcessing: false, StatusDone: true, StatusFailed: true}
+	for status, ok := range want {
+		if deletable[status] != ok {
+			t.Errorf("DeletableFrom contains %s = %v, want %v", status, deletable[status], ok)
+		}
+	}
+}

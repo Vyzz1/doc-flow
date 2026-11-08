@@ -16,7 +16,7 @@ import (
 // nothing here needs the features the REST flavour charges for. The JWT
 // authorizer is part of the gateway, so an unsigned request never reaches a
 // function and never costs an invocation.
-func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob, listJobs awslambda.Function) awsapigatewayv2.HttpApi {
+func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob, listJobs, deleteJob awslambda.Function) awsapigatewayv2.HttpApi {
 	authorizer := awsapigatewayv2authorizers.NewHttpJwtAuthorizer(
 		jsii.String("JwtAuthorizer"),
 		users.issuer(stack),
@@ -36,6 +36,7 @@ func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob, listJobs 
 			AllowMethods: &[]awsapigatewayv2.CorsHttpMethod{
 				awsapigatewayv2.CorsHttpMethod_GET,
 				awsapigatewayv2.CorsHttpMethod_POST,
+				awsapigatewayv2.CorsHttpMethod_DELETE,
 			},
 			AllowHeaders: jsii.Strings("authorization", "content-type"),
 			AllowOrigins: jsii.Strings("*"),
@@ -62,6 +63,13 @@ func newHttpApi(stack awscdk.Stack, users identity, createJob, getJob, listJobs 
 		Methods: &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_GET},
 		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(
 			jsii.String("GetJobIntegration"), getJob, nil),
+		Authorizer: authorizer,
+	})
+	api.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
+		Path:    jsii.String("/jobs/{id}"),
+		Methods: &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_DELETE},
+		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(
+			jsii.String("DeleteJobIntegration"), deleteJob, nil),
 		Authorizer: authorizer,
 	})
 

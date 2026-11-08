@@ -478,3 +478,63 @@ func TestLiveEveryItemCarriesTheTTLAttribute(t *testing.T) {
 		}
 	}
 }
+
+// The condition and the child deletes are what a fake cannot show: that the
+// database refuses a PROCESSING job, and that the results go with the job.
+func TestLiveDeleteJob(t *testing.T) {
+	s := newLiveStore(t)
+	ctx := t.Context()
+	job := liveJob(t, newID(t))
+	if err := s.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	step, err := model.NewStepResult(job.JobID, model.StepValidate, time.Now(), time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("NewStepResult: %v", err)
+	}
+	if err := s.PutStepResult(ctx, step); err != nil {
+		t.Fatalf("PutStepResult: %v", err)
+	}
+
+	t.Run("refuses a job that is processing", func(t *testing.T) {
+		if err := s.UpdateStatus(ctx, job.UserID, job.JobID, model.StatusPending, model.StatusProcessing, time.Now()); err != nil {
+			t.Fatalf("UpdateStatus: %v", err)
+		}
+		if err := s.DeleteJob(ctx, job.UserID, job.JobID); !errors.Is(err, ErrStatusConflict) {
+			t.Fatalf("DeleteJob error = %v, want ErrStatusConflict", err)
+		}
+		if _, err := s.GetJob(ctx, job.UserID, job.JobID); err != nil {
+			t.Errorf("the job is gone after a refused delete: %v", err)
+		}
+		if steps, _ := s.ListStepResults(ctx, job.JobID); len(steps) != 1 {
+			t.Errorf("%d step results remain after a refused delete, want 1", len(steps))
+		}
+	})
+
+	t.Run("does not touch another user's job", func(t *testing.T) {
+		if err := s.DeleteJob(ctx, "user-2", job.JobID); !errors.Is(err, ErrJobNotFound) {
+			t.Errorf("DeleteJob error = %v, want ErrJobNotFound", err)
+		}
+		if _, err := s.GetJob(ctx, job.UserID, job.JobID); err != nil {
+			t.Errorf("the owner's job is gone after another user's delete: %v", err)
+		}
+	})
+
+	t.Run("removes a finished job with its steps and result", func(t *testing.T) {
+		if err := s.FailJob(ctx, job.UserID, job.JobID, "The document could not be processed.", time.Now()); err != nil {
+			t.Fatalf("FailJob: %v", err)
+		}
+		if err := s.DeleteJob(ctx, job.UserID, job.JobID); err != nil {
+			t.Fatalf("DeleteJob: %v", err)
+		}
+		if _, err := s.GetJob(ctx, job.UserID, job.JobID); !errors.Is(err, ErrJobNotFound) {
+			t.Errorf("GetJob error = %v, want ErrJobNotFound", err)
+		}
+		if steps, err := s.ListStepResults(ctx, job.JobID); err != nil || len(steps) != 0 {
+			t.Errorf("ListStepResults = %v, %v, want none", steps, err)
+		}
+		if err := s.DeleteJob(ctx, job.UserID, job.JobID); !errors.Is(err, ErrJobNotFound) {
+			t.Errorf("a second delete error = %v, want ErrJobNotFound", err)
+		}
+	})
+}

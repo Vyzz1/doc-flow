@@ -64,6 +64,20 @@ func (f *fakeAPI) PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Opt
 	return &s3.PutObjectOutput{}, nil
 }
 
+// The reading tests never delete, so these only satisfy the interface; the
+// removal tests override them in removeAPI.
+func (f *fakeAPI) DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+func (f *fakeAPI) DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	return &s3.DeleteObjectsOutput{}, nil
+}
+
+func (f *fakeAPI) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	return &s3.ListObjectsV2Output{}, nil
+}
+
 func newReader(f *fakeAPI) *S3 {
 	return NewS3(&fakePresigner{}, testBucket, WithClient(f))
 }
